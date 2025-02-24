@@ -1,0 +1,39 @@
+/data_preparation/.env
+# PyCharm
+.idea/
+
+# Wirtualne środowiska
+.venv/
+env/
+venv/
+ENV/
+
+# Pliki i katalogi systemu operacyjnego
+.DS_Store
+Thumbs.db
+
+# Pliki kompilacji i cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.swp
+
+# Zignorowanie pliku .env (jeśli przechowujesz w nim dane wrażliwe)
+.env
+
+# Logs
+*.log
+
+# Python bytecode
+*.py[cod]
+
+# Temporary files created by IDE
+*.iml
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Wyszukiwarki i pliki indeksu
+.vscode/
