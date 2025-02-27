@@ -24,16 +24,16 @@ def ensure_collections():
     for col in document_collections:
         if not db.hasCollection(col):
             db.createCollection(name=col)
-            print(f"Stworzono kolekcję dokumentów: {col}")
+            print(f"Created document collection: {col}")
 
     for col in edge_collections:
         if not db.hasCollection(col):
             db.createCollection(name=col, className="Edges")
-            print(f"Stworzono kolekcję krawędzi: {col}")
+            print(f"Created edge collection: {col}")
 
 
 ensure_collections()
-print("Wszystkie wymagane kolekcje są gotowe.")
+print("All collections created")
 
 # Pobranie kolekcji dokumentów
 videos = db["Videos"]
@@ -83,10 +83,9 @@ with open('data.csv', mode='r') as file:
         video.save()
 
         # Tworzymy krawędź HasCreator – relacja między twórcą a filmem.
-        # Zakładamy, że chcemy, aby z twórcy można przejść do filmów, które stworzył.
         has_creator_edge = has_creator.createDocument()
-        has_creator_edge["_from"] = creator._id  # Dokument twórcy
-        has_creator_edge["_to"] = video._id  # Dokument filmu
+        has_creator_edge["_from"] = creator._id
+        has_creator_edge["_to"] = video._id
         has_creator_edge.save()
 
         # Utworzenie dokumentu dla języka
@@ -101,7 +100,6 @@ with open('data.csv', mode='r') as file:
         has_language_edge.save()
 
         # Utworzenie krawędzi dla hashtagów
-        # Zakładamy, że kolumna Hashtags zawiera hashtagi oddzielone spacjami
         hashtags_list = row["Hashtags"].split()
         for tag in hashtags_list:
             hashtag_doc = hashtags.createDocument()
@@ -140,4 +138,4 @@ with open('data.csv', mode='r') as file:
         has_quality_edge["_to"] = quality_doc._id
         has_quality_edge.save()
 
-print("Dane zostały załadowane do ArangoDB.")
+print("Data loaded to database")
