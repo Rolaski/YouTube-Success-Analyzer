@@ -10,7 +10,7 @@ import os
 from dotenv import load_dotenv
 
 # Załaduj plik .env z folderu /database
-env_path = os.path.join(os.path.dirname(__file__), 'database', '.env')
+env_path = os.path.join(os.path.dirname(__file__), '../database', '.env')
 
 # Ładowanie zmiennych środowiskowych
 load_dotenv(env_path)
@@ -178,8 +178,6 @@ def add_video_to_arango(title, url, views, duration, creator_key):
 def show_graph_page():
     st.header("📌 Graf Relacji Twórców i Wideo")
 
-
-
     # Inicjalizacja zmiennych sesji
     if "last_data_state" not in st.session_state:
         st.session_state["last_data_state"] = (None, None, None)
@@ -200,6 +198,12 @@ def show_graph_page():
                 components.html(graph_html, height=600)
         else:
             st.warning("Graf nie został jeszcze wygenerowany. Naciśnij przycisk 'Odśwież graf'.")
+            # Generowanie grafu jeśli nie istnieje
+            generate_and_save_graph(current_data[0], current_data[1], current_data[2])
+            # Następnie wyświetl go
+            with open(SAVED_GRAPH_PATH, "r", encoding="utf-8") as file:
+                graph_html = file.read()
+                components.html(graph_html, height=600)
     except Exception as e:
         st.error(f"Błąd podczas wyświetlania grafu: {str(e)}")
 
