@@ -1,10 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 import plotly.express as px
-import plotly.graph_objects as go
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
@@ -17,10 +14,7 @@ import joblib
 import os
 from arango import ArangoClient
 from dotenv import load_dotenv
-import re
-import hashlib
-from datetime import datetime
-import time
+
 
 # Załaduj plik .env z folderu /database
 env_path = os.path.join(os.path.dirname(__file__), 'database', '.env')
