@@ -59,7 +59,7 @@ The dataset used in this project is [YouTube Channel and Influencer Analysis](ht
 
 ### 2. Install Dependencies
 ```bash
-pip install pyArango python-dotenv
+pip install -r requirements.txt
 ```
 
 ### 3. Configure Environment Variables
