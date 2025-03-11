@@ -16,7 +16,7 @@ def validate_data():
     # Connect to ArangoDB
     client = ArangoClient(hosts='http://localhost:8529')
 
-    # Connect to the database
+    # Connect to the databasee
     db = client.db(database_name, username=username, password=password)
 
     # Get the current directory
