@@ -197,7 +197,6 @@ def show_graph_page():
                 graph_html = file.read()
                 components.html(graph_html, height=600)
         else:
-            st.warning("Graf nie został jeszcze wygenerowany. Naciśnij przycisk 'Odśwież graf'.")
             # Generowanie grafu jeśli nie istnieje
             generate_and_save_graph(current_data[0], current_data[1], current_data[2])
             # Następnie wyświetl go
