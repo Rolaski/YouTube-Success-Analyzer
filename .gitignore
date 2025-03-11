@@ -11,6 +11,7 @@ graph.html
 env/
 venv/
 ENV/
+lib/
 
 # Pliki i katalogi systemu operacyjnego
 .DS_Store
