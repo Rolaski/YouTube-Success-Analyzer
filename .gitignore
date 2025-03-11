@@ -1,4 +1,5 @@
-data_preparation/.env
+database/.env
+data_preparation/normalized_data.csv
 # PyCharm
 .idea/
 
@@ -20,8 +21,7 @@ __pycache__/
 *.pdb
 *.swp
 
-# Zignorowanie pliku .env (jeśli przechowujesz w nim dane wrażliwe)
-.env
+
 
 # Logs
 *.log
