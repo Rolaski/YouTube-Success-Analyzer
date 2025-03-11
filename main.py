@@ -366,19 +366,18 @@ def analyze_success_patterns(df):
 
 # Funkcja do analizy indywidualnego filmu
 def analyze_video(df, video_id):
-    # Znalezienie filmu po ID
-    # Upewnij się, że _key i video_id są tego samego typu (np. string)
+    # Konwersja identyfikatora do string i wyszukiwanie filmu
     df['_key'] = df['_key'].astype(str)
     video_id = str(video_id)
-
-    # Znalezienie filmu po ID
     video_matches = df[df['_key'] == video_id]
-    if len(video_matches) > 0:
-        video = video_matches.iloc[0]
-    else:
-        return {"error": "Film nie został znaleziony"}
 
-    # Wyniki analizy do zwrócenia
+    # Jeśli nie znaleziono, spróbuj wyszukać po tytule (fallback)
+    if len(video_matches) == 0:
+        video_matches = df[df['title'].str.contains(video_id, case=False, na=False)]
+        if len(video_matches) == 0:
+            return {"error": "Film nie został znaleziony. Upewnij się, że identyfikator jest prawidłowy."}
+
+    video = video_matches.iloc[0]
     analysis = {}
 
     # 1. Podstawowe informacje o filmie
@@ -389,102 +388,180 @@ def analyze_video(df, video_id):
         'comments': video.get('comment_count', 0),
         'duration_seconds': video.get('duration_seconds', 0),
         'upload_date': video.get('upload_date', 'Unknown'),
-        'language': video.get('language', 'Unknown')
+        'language': video.get('language', 'Unknown'),
+        'hashtag_count': video.get('hashtag_count', 0),
+        'description_length': video.get('description_length', 0),
+        'title_length': video.get('title_length', 0)
     }
 
-    # 2. Ocena sukcesu
+    # 2. Ocena sukcesu na podstawie rankingu
     if 'views' in df.columns:
-        quantiles = [0.25, 0.5, 0.75, 0.9, 0.95, 0.99]
-        thresholds = {f'top_{int(100 - q * 100)}%': df['views'].quantile(q) for q in quantiles}
-
-        # Określenie w którym percentylu znajduje się film
         views = video.get('views', 0)
-        percentile = 0
-        for q, threshold in zip(quantiles, thresholds.values()):
-            if views >= threshold:
-                percentile = 1 - q
-
+        N = len(df)
+        rank = (df['views'] > views).sum() + 1  # film o najwyższych wyświetleniach otrzymuje rank = 1
+        top_percent = (rank / N) * 100  # im niższa wartość, tym lepiej
+        thresholds = {f'top_{int(100 - q * 100)}%': df['views'].quantile(q) for q in [0.25, 0.5, 0.75, 0.9, 0.95, 0.99]}
         analysis['success_rating'] = {
-            'percentile': percentile * 100,
+            'top_percent': top_percent,
             'thresholds': thresholds,
-            'is_viral': views >= thresholds['top_10%'],
-            'is_successful': views >= thresholds['top_25%']
+            'is_viral': views >= thresholds.get('top_10%', float('inf')),
+            'is_successful': views >= thresholds.get('top_25%', float('inf'))
         }
 
-    # 3. Optymalizacja - co można poprawić
-    optimization = []
+    # 3. Porównanie z filmami w tym samym języku
+    similar_lang = df[df['language'] == video.get('language', 'Unknown')]
+    language_avg_views = similar_lang['views'].mean() if not similar_lang.empty else None
+    if language_avg_views:
+        language_diff = (video.get('views', 0) / language_avg_views - 1) * 100
+        analysis['language_comparison'] = {
+            'avg_views': language_avg_views,
+            'percent_difference': language_diff,
+            'better_than_average': language_diff > 0
+        }
 
-    # a. Czas trwania
-    if 'duration_seconds' in df.columns and 'duration_category' in df.columns:
-        # Znalezienie optymalnego czasu trwania (z najwyższą średnią wyświetleń)
-        optimal_duration = df.groupby('duration_category')['views'].mean().idxmax()
-        current_duration = video.get('duration_seconds', 0) / 60
-
-        if current_duration < 0.5:  # Poniżej 30 sekund
-            optimal_duration_str = str(optimal_duration)
-            optimization.append(
-                f"Film jest bardzo krótki ({current_duration:.1f} min). Najlepiej sprawdzają się filmy o długości {optimal_duration_str}.")
-        elif (current_duration > 30 and optimal_duration == '5-10 min') or \
-                (current_duration > 15 and optimal_duration == '3-5 min'):
-            optimization.append(
-                f"Film jest zbyt długi ({current_duration:.1f} min). Rozważ skrócenie go do {optimal_duration}.")
-
-    # b. Hashtagi
-    if 'hashtag_count' in df.columns:
-        optimal_hashtag_count = df.groupby('hashtag_category')['views'].mean().idxmax()
-        current_hashtag_count = video.get('hashtag_count', 0)
-
-        if current_hashtag_count == 0 and optimal_hashtag_count != '0':
-            optimal_hashtag_count_str = str(optimal_hashtag_count)
-            optimization.append(f"Brak hashtagów. Dodaj {optimal_hashtag_count_str} hashtagów, aby zwiększyć zasięg.")
-        elif current_hashtag_count > 10 and optimal_hashtag_count in ['1-3', '4-5']:
-            optimization.append(
-                f"Zbyt wiele hashtagów ({current_hashtag_count}). Ogranicz do {optimal_hashtag_count} najbardziej trafnych.")
-
-    # c. Opis filmu
-    if 'description_length' in df.columns:
-        # Porównanie długości opisu z filmami odnoszącymi sukces
-        top_videos_desc_length = df[df['views'] >= df['views'].quantile(0.75)]['description_length'].mean()
-        current_desc_length = video.get('description_length', 0)
-
-        if current_desc_length < 0.5 * top_videos_desc_length:
-            optimization.append(
-                f"Opis filmu jest zbyt krótki. Najlepsze filmy mają opisy o długości ok. {int(top_videos_desc_length)} znaków.")
-
-    analysis['optimization_suggestions'] = optimization
-
-    # 4. Porównanie z podobnymi filmami
-    if 'language' in df.columns:
-        # Znalezienie filmów w tym samym języku
-        similar_language = df[df['language'] == video.get('language', 'Unknown')]
-
-        # Porównanie wyświetleń
-        if len(similar_language) > 0:
-            language_avg_views = similar_language['views'].mean()
-            language_comparison = (video.get('views', 0) / language_avg_views - 1) * 100
-
-            analysis['language_comparison'] = {
-                'avg_views': language_avg_views,
-                'percent_difference': language_comparison,
-                'better_than_average': language_comparison > 0
-            }
-
-    # 5. Analiza współczynników zaangażowania
+    # 4. Analiza zaangażowania
     engagement = {}
+    if video.get('views', 0) > 0:
+        engagement['like_ratio'] = (video.get('likes', 0) / video.get('views', 1)) * 100
+        engagement['comment_ratio'] = (video.get('comment_count', 0) / video.get('views', 1)) * 100
 
-    if 'views' in video and 'likes' in video and video['views'] > 0:
-        engagement['like_ratio'] = (video['likes'] / video['views']) * 100
-        # Porównanie z średnią
-        avg_like_ratio = (df['likes'] / df['views'] * 100).mean()
-        engagement['like_ratio_vs_avg'] = engagement['like_ratio'] / avg_like_ratio
+        # Obliczanie średnich wskaźników dla całego zbioru
+        avg_like_ratio = (df['likes'] / df['views'] * 100).mean() if (df['views'] > 0).all() else None
+        avg_comment_ratio = (df['comment_count'] / df['views'] * 100).mean() if (df['views'] > 0).all() else None
 
-    if 'views' in video and 'comment_count' in video and video['views'] > 0:
-        engagement['comment_ratio'] = (video['comment_count'] / video['views']) * 100
-        # Porównanie z średnią
-        avg_comment_ratio = (df['comment_count'] / df['views'] * 100).mean()
-        engagement['comment_ratio_vs_avg'] = engagement['comment_ratio'] / avg_comment_ratio
-
+        engagement['like_ratio_vs_avg'] = engagement['like_ratio'] / (avg_like_ratio or 1)
+        engagement['comment_ratio_vs_avg'] = engagement['comment_ratio'] / (avg_comment_ratio or 1)
     analysis['engagement_metrics'] = engagement
+
+    # 5. Szczegółowa analiza cech i rekomendacje
+    recommendations = []  # wskazówki do poprawy lub działania
+    strengths = []  # mocne strony filmu
+    factors = []  # czynniki wpływające na wyświetlenia
+
+    # a) Język
+    if language_avg_views:
+        if language_diff > 50:
+            factors.append(
+                f"Film ma o {language_diff:.1f}% więcej wyświetleń niż średnia dla filmów w języku {video.get('language', 'Unknown')}, co świadczy o silnym potencjale w tej grupie."
+            )
+            strengths.append("Świetny wynik w ramach danego języka.")
+        else:
+            factors.append(
+                f"Film osiąga wyniki o {abs(language_diff):.1f}% {'wyższe' if language_diff > 0 else 'niższe'} niż średnia dla filmów w języku {video.get('language', 'Unknown')}."
+            )
+            if language_diff < 0:
+                recommendations.append(
+                    "Rozważ działania marketingowe lub lepsze targetowanie, aby poprawić wyniki w tej grupie."
+                )
+
+    # b) Długość filmu
+    duration_min = video.get('duration_seconds', 0) / 60
+    avg_duration = df['duration_seconds'].mean() / 60 if 'duration_seconds' in df.columns else None
+    if avg_duration:
+        if duration_min < avg_duration * 0.7:
+            factors.append(f"Film jest krótszy ({duration_min:.1f} min) niż średnia ({avg_duration:.1f} min).")
+            recommendations.append(
+                "Rozważ wydłużenie filmu, aby dostarczyć więcej treści, co może przyczynić się do lepszego zaangażowania widzów."
+            )
+        elif duration_min > avg_duration * 1.3:
+            factors.append(f"Film jest dłuższy ({duration_min:.1f} min) niż średnia ({avg_duration:.1f} min).")
+            recommendations.append(
+                "Skrócenie filmu może pomóc w utrzymaniu uwagi widzów."
+            )
+        else:
+            strengths.append("Długość filmu jest zbliżona do średniej, co wskazuje na odpowiedni balans treści.")
+
+    # c) Tytuł
+    current_title = video.get('title_length', 0)
+    avg_title_length = df['title_length'].mean() if 'title_length' in df.columns else None
+    if avg_title_length:
+        if current_title < avg_title_length * 0.8:
+            factors.append(
+                f"Tytuł filmu ma {current_title} znaków, podczas gdy średnia wynosi {avg_title_length:.0f} znaków.")
+            recommendations.append(
+                "Rozważ uatrakcyjnienie tytułu poprzez dodanie większej ilości informacji lub emocji, co może zwiększyć CTR."
+            )
+        else:
+            strengths.append("Tytuł filmu jest na poziomie lub powyżej średniej.")
+
+    # d) Opis filmu
+    current_desc = video.get('description_length', 0)
+    avg_desc_length = df['description_length'].mean() if 'description_length' in df.columns else None
+    if avg_desc_length:
+        if current_desc < avg_desc_length * 0.5:
+            factors.append(
+                f"Opis filmu ma tylko {current_desc} znaków, co jest znacznie poniżej średniej ({avg_desc_length:.0f} znaków).")
+            recommendations.append(
+                "Rozważ rozbudowanie opisu filmu z uwzględnieniem kluczowych słów i szczegółów, co może poprawić SEO i zaangażowanie widzów."
+            )
+        else:
+            strengths.append("Opis filmu jest wystarczająco rozbudowany.")
+
+    # e) Hashtagi
+    current_hashtag = video.get('hashtag_count', 0)
+    avg_hashtag = df['hashtag_count'].mean() if 'hashtag_count' in df.columns else None
+    if avg_hashtag:
+        if current_hashtag < avg_hashtag * 0.7:
+            factors.append(
+                f"Film wykorzystuje {current_hashtag} hashtagów, co jest poniżej średniej ({avg_hashtag:.1f}).")
+            recommendations.append(
+                "Rozważ dodanie trafnych hashtagów, które pomogą w zwiększeniu zasięgu filmu."
+            )
+        elif current_hashtag > avg_hashtag * 1.5:
+            factors.append(f"Film używa {current_hashtag} hashtagów, co przekracza średnią ({avg_hashtag:.1f}).")
+            recommendations.append(
+                "Zbyt duża liczba hashtagów może rozpraszać – warto ograniczyć się do kilku najtrafniejszych."
+            )
+        else:
+            strengths.append("Liczba hashtagów jest optymalna.")
+
+    # f) Zaangażowanie widzów
+    like_ratio = (video.get('likes', 0) / video.get('views', 1)) * 100
+    comment_ratio = (video.get('comments', 0) / video.get('views', 1)) * 100
+    avg_like_ratio = (df['likes'] / df['views'] * 100).mean() if (df['views'] > 0).all() else None
+    avg_comment_ratio = (df['comment_count'] / df['views'] * 100).mean() if (df['views'] > 0).all() else None
+    if avg_like_ratio:
+        if like_ratio < avg_like_ratio * 0.8:
+            factors.append(
+                f"Współczynnik polubień wynosi {like_ratio:.2f}%, podczas gdy średnia to {avg_like_ratio:.2f}%.")
+            recommendations.append(
+                "Rozważ dodanie wyraźnego wezwania do działania, aby zwiększyć liczbę polubień."
+            )
+        else:
+            strengths.append("Współczynnik polubień jest na dobrym poziomie.")
+    if avg_comment_ratio:
+        if comment_ratio < avg_comment_ratio * 0.8:
+            factors.append(
+                f"Współczynnik komentarzy wynosi {comment_ratio:.2f}%, podczas gdy średnia to {avg_comment_ratio:.2f}%.")
+            # Dla bardzo udanych filmów łagodniej
+            if analysis.get('success_rating', {}).get('top_percent', 100) <= 10:
+                recommendations.append(
+                    "Mimo niskiego współczynnika komentarzy film osiąga ogromną liczbę wyświetleń. Można jednak rozważyć zachęcenie widzów do komentowania, aby zwiększyć interakcje."
+                )
+            else:
+                recommendations.append(
+                    "Niski współczynnik komentarzy sugeruje, że widzowie mogą być mniej zaangażowani. Zachęć do komentowania, np. poprzez pytania lub ankiety."
+                )
+        else:
+            strengths.append("Współczynnik komentarzy jest zadowalający.")
+
+    # g) Podsumowanie końcowe – komunikat zależny od pozycji w rankingu
+    if 'success_rating' in analysis:
+        top_percent = analysis['success_rating']['top_percent']
+        if top_percent <= 10:
+            final_msg = "Gratulacje! Film jest jednym z najlepszych na platformie."
+        elif top_percent <= 25:
+            final_msg = "Film osiąga bardzo dobre wyniki, ale warto rozważyć pewne usprawnienia dla jeszcze lepszego efektu."
+        else:
+            final_msg = "Film ma potencjał, jednak istnieją obszary, które warto zoptymalizować, aby zwiększyć zasięg i zaangażowanie."
+    else:
+        final_msg = ""
+
+    # Łączenie wyników
+    analysis['factors'] = factors  # Czynniki wpływające na wyświetlenia (zarówno atuty, jak i obszary do poprawy)
+    analysis['optimization_suggestions'] = recommendations  # Konkretne wskazówki co można poprawić lub utrzymać
+    analysis['strengths'] = strengths  # Mocne strony filmu
+    analysis['final_summary'] = final_msg
 
     return analysis
 
@@ -835,18 +912,24 @@ def show_single_video_analysis_page(df):
 
     # Lista filmów do wyboru
     video_options = df[['_key', 'title', 'views']].sort_values('views', ascending=False)
+
+    # Tworzymy etykietę wyświetlaną bez klucza
     video_options['display_option'] = video_options.apply(
-        lambda x: f"{x['title']} ({x['_key']}) - {int(x['views']):,} wyświetleń", axis=1
+        lambda x: f"{x['title']} - {int(x['views']):,} wyświetleń", axis=1
     )
 
+    # Tworzymy słownik mapujący etykietę na _key
+    video_dict = dict(zip(video_options['display_option'], video_options['_key']))
+
+    # Wybór filmu z listy etykiet
     selected_option = st.selectbox(
         "Wybierz film do analizy:",
-        options=video_options['display_option'].tolist()
+        options=list(video_dict.keys())
     )
 
     if selected_option:
         # Wyodrębnienie _key z wybranej opcji
-        video_id = selected_option.split(' (')[1].split(')')[0]
+        video_id = video_dict[selected_option]
 
         with st.spinner('Analizowanie filmu...'):
             analysis = analyze_video(df, video_id)
@@ -863,15 +946,19 @@ def show_single_video_analysis_page(df):
 
                 # Ocena sukcesu
                 if 'success_rating' in analysis:
-                    percentile = analysis['success_rating']['percentile']
-                    if percentile >= 90:
-                        st.success(f"🌟 Ten film znajduje się w TOP {100 - int(percentile)}% wszystkich filmów!")
-                    elif percentile >= 75:
-                        st.success(f"👍 Ten film odniósł sukces! Lepszy niż {int(percentile)}% filmów.")
-                    elif percentile >= 50:
-                        st.info(f"😊 Ten film radzi sobie lepiej niż {int(percentile)}% filmów.")
+                    top_percent = analysis['success_rating']['top_percent']
+                    # Komunikaty dostosowane do pozycji filmu w rankingu
+                    if top_percent <= 1:
+                        st.success("🌟 Ten film jest najpopularniejszy na platformie!")
+                    elif top_percent <= 10:
+                        st.success(f"🌟 Ten film znajduje się w TOP {int(top_percent)}% filmów.")
+                    elif top_percent <= 25:
+                        st.success(f"👍 Ten film jest bardzo udany i plasuje się w TOP {int(top_percent)}% filmów.")
+                    elif top_percent <= 50:
+                        st.info(f"😊 Ten film osiąga wyniki lepsze niż {int(100 - top_percent)}% filmów.")
                     else:
-                        st.warning(f"🤔 Ten film radzi sobie lepiej niż tylko {int(percentile)}% filmów.")
+                        st.warning(
+                            f"🤔 Ten film wymaga poprawy – osiąga wyniki lepsze niż tylko {int(100 - top_percent)}% filmów.")
 
             with col2:
                 st.metric("Polubienia", f"{int(analysis['basic_info']['likes']):,}")
@@ -939,37 +1026,14 @@ def show_single_video_analysis_page(df):
             st.subheader("📊 Podsumowanie")
 
             if 'success_rating' in analysis:
-                percentile = analysis['success_rating']['percentile']
-
-                if percentile >= 90:
-                    st.success("""
-                        **Film jest viralowy!** Warto:
-                        1. Tworzyć więcej podobnych treści
-                        2. Promować ten film na innych kanałach
-                        3. Analizować komentarze i interakcje, by zrozumieć co zadziałało najlepiej
-                        """)
-                elif percentile >= 75:
-                    st.success("""
-                        **Film odniósł sukces!** Zalecenia:
-                        1. Badaj co wyróżnia ten film od innych na twoim kanale
-                        2. Twórz więcej treści w podobnym stylu
-                        3. Rozważ utworzenie playlisty z podobnymi filmami
-                        """)
-                elif percentile >= 50:
-                    st.info("""
-                        **Film radzi sobie dobrze, ale można osiągnąć więcej.** Sugestie:
-                        1. Popraw tytuł, miniaturę i opis, aby zwiększyć CTR
-                        2. Dodaj więcej wezwań do działania
-                        3. Promuj film w mediach społecznościowych
-                        """)
+                top_percent = analysis['success_rating']['top_percent']
+                if top_percent <= 25:
+                    st.success("Film osiągnął lub przekroczył oczekiwany potencjał. Gratulacje!")
+                elif top_percent <= 50:
+                    st.info("Film radzi sobie dobrze, ale warto rozważyć dalsze usprawnienia.")
                 else:
-                    st.warning("""
-                        **Film nie osiągnął swojego potencjału.** Rozważ:
-                        1. Zmianę tytułu i miniatury
-                        2. Lepszą optymalizację SEO
-                        3. Analizę konkurencyjnych filmów na podobny temat
-                        4. Zastanów się nad formatem i długością - czy mogłyby być bardziej angażujące?
-                        """)
+                    st.warning(
+                        "Film nie osiągnął pełnego potencjału. Rozważ zmianę tytułu, miniatury, optymalizację SEO oraz analizę konkurencyjnych treści.")
 
 
 if __name__ == "__main__":
