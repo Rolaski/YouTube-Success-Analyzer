@@ -1,5 +1,8 @@
 database/.env
 data_preparation/normalized_data.csv
+graph.html
+./results
+/models/youtube_success_model.pkl
 # PyCharm
 .idea/
 
