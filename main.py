@@ -174,7 +174,11 @@ def train_model(df):
 
     # Identyfikacja typów kolumn
     numeric_cols = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
-    categorical_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+    categorical_cols = X.select_dtypes(include=['object', 'category', 'bool']).columns.tolist()
+
+    # Konwersja kolumn boolowskich na stringi
+    for col in categorical_cols:
+        X[col] = X[col].astype(str)
 
     # Preprocessing: imputacja brakujących wartości i kodowanie zmiennych kategorycznych
     numeric_transformer = Pipeline(steps=[
@@ -224,8 +228,13 @@ def train_model(df):
     if hasattr(model.named_steps['preprocessor'], 'get_feature_names_out'):
         feature_names = model.named_steps['preprocessor'].get_feature_names_out()
     else:
-        # Alternatywne podejście, jeśli poprzednie nie zadziała
         feature_names = numeric_cols + categorical_cols
+
+    # Jeśli w pipeline znajduje się selektor cech, przefiltruj nazwy cech
+    if 'selector' in model.named_steps:
+        selector = model.named_steps['selector']
+        mask = selector.get_support()
+        feature_names = [f for f, m in zip(feature_names, mask) if m]
 
     feature_importance = pd.DataFrame({
         'feature': feature_names,
