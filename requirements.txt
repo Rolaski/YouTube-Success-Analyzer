@@ -1,0 +1,1 @@
+pip install streamlit arango matplotlib seaborn pandas
