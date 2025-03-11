@@ -14,6 +14,8 @@ import joblib
 import os
 from arango import ArangoClient
 from dotenv import load_dotenv
+from data_preparation.graph import show_graph_page
+
 
 
 # Załaduj plik .env z folderu /database
@@ -575,7 +577,7 @@ def main():
 
     # Sidebar z nawigacją
     st.sidebar.title("Nawigacja")
-    page = st.sidebar.radio("Wybierz stronę", ["Ogólna Analiza Sukcesu", "Analiza Pojedynczego Filmu"])
+    page = st.sidebar.radio("Wybierz stronę", ["Ogólna Analiza Sukcesu", "Analiza Pojedynczego Filmu", "Graf"])
 
     # Wczytanie danych
     try:
@@ -587,9 +589,11 @@ def main():
 
         if page == "Ogólna Analiza Sukcesu":
             show_general_success_page(df)
-        else:
-            # st.write(df.columns.tolist())
+        elif page == "Analiza Pojedynczego Filmu":
             show_single_video_analysis_page(df)
+        elif page == "Graf":
+            show_graph_page()
+
 
     except Exception as e:
         st.error(f"Wystąpił błąd podczas pobierania danych: {str(e)}")
