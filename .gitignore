@@ -41,4 +41,5 @@ __pycache__/
 
 # Wyszukiwarki i pliki indeksu
 .vscode/
-/.env
+/database/.env
+/saved_graph.html
