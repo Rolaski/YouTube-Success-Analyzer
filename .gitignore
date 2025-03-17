@@ -41,3 +41,4 @@ __pycache__/
 
 # Wyszukiwarki i pliki indeksu
 .vscode/
+/.env
