@@ -47,11 +47,59 @@ def get_graph_data():
         return None, None, None
 
 
-def generate_and_save_graph(df_creators, df_videos, df_edges):
+def generate_and_save_graph(df_creators, df_videos, df_edges, max_nodes=10, selected_creator=None):
     G = nx.Graph()
 
+    # Filtrowanie danych na podstawie wybranego twórcy
+    if selected_creator and not selected_creator == "Wszyscy":
+        # Znajdź klucz wybranego twórcy
+        creator_key = df_creators[df_creators['name'] == selected_creator]['_key'].values[0]
+
+        # Filtruj krawędzie dla wybranego twórcy
+        filtered_edges = df_edges[df_edges['_from'].str.contains(f"creators/{creator_key}")]
+
+        # Znajdź filmy powiązane z wybranym twórcą
+        related_video_keys = [edge['_to'].split('/')[-1] for _, edge in filtered_edges.iterrows()]
+
+        # Filtruj DataFrame z filmami
+        filtered_videos = df_videos[df_videos['_key'].isin(related_video_keys)]
+
+        # Używaj tylko danych dla wybranego twórcy
+        selected_creators = df_creators[df_creators['_key'] == creator_key]
+    else:
+        filtered_videos = df_videos
+        filtered_edges = df_edges
+        selected_creators = df_creators
+
+    # Ograniczenie liczby węzłów z równoważeniem między twórcami i filmami
+    total_available = len(selected_creators) + len(filtered_videos)
+    if total_available > max_nodes:
+        # Oblicz proporcjonalną liczbę twórców i filmów
+        if len(selected_creators) == 1:
+            # Jeśli mamy tylko jednego twórcę, pokazujemy go i resztę to filmy
+            creators_to_show = 1
+            videos_to_show = max_nodes - 1
+        else:
+            # Inaczej równoważymy między twórcami i filmami
+            creators_ratio = min(0.3, len(selected_creators) / total_available)  # Maksymalnie 30% to twórcy
+            creators_to_show = min(len(selected_creators), max(1, int(max_nodes * creators_ratio)))
+            videos_to_show = max_nodes - creators_to_show
+
+        # Ogranicz odpowiednio twórców i filmy
+        selected_creators = selected_creators.head(creators_to_show)
+        filtered_videos = filtered_videos.head(videos_to_show)
+
+        # Zaktualizuj krawędzie
+        creator_keys = selected_creators['_key'].tolist()
+        video_keys = filtered_videos['_key'].tolist()
+
+        filtered_edges = filtered_edges[
+            filtered_edges['_from'].apply(lambda x: x.split('/')[-1] in creator_keys) &
+            filtered_edges['_to'].apply(lambda x: x.split('/')[-1] in video_keys)
+            ]
+
     # Dodawanie węzłów twórców
-    for _, row in df_creators.iterrows():
+    for _, row in selected_creators.iterrows():
         G.add_node(row['_key'],
                    label=row['name'],
                    title=f"Twórca: {row['name']}\nSubskrypcje: {row.get('total_subscribers', 'N/A')}",
@@ -59,7 +107,7 @@ def generate_and_save_graph(df_creators, df_videos, df_edges):
                    size=25)
 
     # Dodawanie węzłów filmów z skróconymi tytułami
-    for _, row in df_videos.iterrows():
+    for _, row in filtered_videos.iterrows():
         # Skróć długie tytuły
         short_title = row['title'][:20] + "..." if len(row['title']) > 20 else row['title']
 
@@ -70,8 +118,11 @@ def generate_and_save_graph(df_creators, df_videos, df_edges):
                    size=12)
 
     # Dodawanie krawędzi
-    for _, row in df_edges.iterrows():
-        G.add_edge(row['_from'].split('/')[-1], row['_to'].split('/')[-1])
+    for _, row in filtered_edges.iterrows():
+        from_key = row['_from'].split('/')[-1]
+        to_key = row['_to'].split('/')[-1]
+        if G.has_node(from_key) and G.has_node(to_key):
+            G.add_edge(from_key, to_key)
 
     # Konfiguracja sieci
     net = Network(height="600px", width="100%", bgcolor="#222222", font_color="white")
@@ -102,35 +153,116 @@ def generate_and_save_graph(df_creators, df_videos, df_edges):
     # Zapisz graf do pliku HTML
     net.save_graph(SAVED_GRAPH_PATH)
 
+    # Zwróć faktyczną liczbę węzłów dla interfejsu
+    return len(selected_creators), len(filtered_videos)
+
 
 # Funkcja do wyświetlania grafu w Streamlit
 def show_graph_page():
     st.header("📌 Graf Relacji Twórców i Wideo")
 
-    # Inicjalizacja zmiennych sesji
-    if "last_data_state" not in st.session_state:
-        st.session_state["last_data_state"] = (None, None, None)
-        st.session_state["data_changed"] = True
+    # Pobierz dane
+    df_creators, df_videos, df_edges = get_graph_data()
 
-    # Pobierz aktualne dane
-    current_data = get_graph_data()
-
-    if current_data[0] is None or current_data[1] is None or current_data[2] is None:
+    if df_creators is None or df_videos is None or df_edges is None:
         st.error("Nie udało się pobrać danych z bazy.")
         return
 
+    # Ustal maksymalną liczbę węzłów
+    total_nodes = len(df_creators) + len(df_videos)
+
+    # Inicjalizacja stanu
+    if 'graph_generated' not in st.session_state:
+        st.session_state.graph_generated = False
+
+    # Przenosimy opcje filtrowania na stronę główną (nie w sidebarze)
+    st.subheader("Opcje filtrowania")
+
+    # Tworzymy dwie kolumny dla opcji filtrowania
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Losowo wybieramy jednego twórcę jako domyślny
+        if len(df_creators) > 0:
+            default_creator_index = 1  # Pierwszy twórca po "Wszyscy"
+            creator_names = ["Wszyscy"] + df_creators['name'].tolist()
+            selected_creator = st.selectbox(
+                "Filtruj według twórcy",
+                options=creator_names,
+                index=default_creator_index,
+                help="Wybierz twórcę, aby zobaczyć jego filmy"
+            )
+        else:
+            selected_creator = "Wszyscy"
+
+    with col2:
+        # Domyślnie pokazujemy bardzo małą liczbę węzłów (1 twórca + jego filmy)
+        if selected_creator != "Wszyscy":
+            # Oblicz domyślną liczbę węzłów dla jednego twórcy i kilku filmów
+            creator_key = df_creators[df_creators['name'] == selected_creator]['_key'].values[0]
+            related_videos_count = df_edges[df_edges['_from'].str.contains(f"creators/{creator_key}")].shape[0]
+            default_nodes = max(2, min(10, 1 + related_videos_count))  # Minimum 2 węzły, maksimum 10
+        else:
+            default_nodes = 10  # Domyślna wartość
+
+        # Dodaj możliwość wpisania liczby węzłów
+        max_nodes = st.number_input(
+            "Maksymalna liczba węzłów",
+            min_value=2,  # Zmieniono minimalną wartość na 2 (minimalnie 1 twórca + 1 film)
+            max_value=total_nodes,
+            value=default_nodes,
+            step=5,
+            help="Wpisz lub wybierz liczbę węzłów do wyświetlenia"
+        )
+
+        # Ostrzeżenie przy dużej liczbie węzłów
+        if max_nodes > 400:
+            show_large_graph = st.checkbox(
+                "Jestem świadomy, że generowanie dużego grafu może zająć do minuty czasu. Chcę kontynuować.",
+                value=False,
+                help="Generowanie dużego grafu może znacząco obciążyć przeglądarkę"
+            )
+            if not show_large_graph:
+                max_nodes = 400
+                st.warning(
+                    "Liczba węzłów została ograniczona do 400. Zaznacz pole powyżej, aby wygenerować większy graf.")
+
+    # Przycisk do regeneracji grafu
+    if st.button("Generuj graf", help="Kliknij, aby wygenerować lub odświeżyć graf"):
+        with st.spinner("Generowanie grafu..."):
+            # Generuj graf na podstawie wybranych opcji
+            creators_count, videos_count = generate_and_save_graph(df_creators, df_videos, df_edges, max_nodes,
+                                                                   selected_creator)
+            st.session_state.graph_generated = True
+            st.success(f"Graf został wygenerowany! Wyświetlono {creators_count} twórców i {videos_count} filmów.")
+
+    # Wizualizacja grafu
+    if not st.session_state.graph_generated and not os.path.exists(SAVED_GRAPH_PATH):
+        # Przy pierwszym załadowaniu, generujemy minimalny graf (10 węzłów)
+        with st.spinner("Generowanie początkowego grafu..."):
+            generate_and_save_graph(df_creators, df_videos, df_edges, 10, selected_creator)
+            st.session_state.graph_generated = True
+
+    # Wyświetl legend
+    st.markdown("""
+    ### Legenda:
+    - 🟠 **Pomarańczowy węzeł**: Twórca
+    - 🔵 **Niebieski węzeł**: Film
+    """)
+
     # Wyświetl zapisany graf
     try:
-        if os.path.exists(SAVED_GRAPH_PATH):
-            with open(SAVED_GRAPH_PATH, "r", encoding="utf-8") as file:
-                graph_html = file.read()
-                components.html(graph_html, height=600)
-        else:
-            # Generowanie grafu jeśli nie istnieje
-            generate_and_save_graph(current_data[0], current_data[1], current_data[2])
-            # Następnie wyświetl go
-            with open(SAVED_GRAPH_PATH, "r", encoding="utf-8") as file:
-                graph_html = file.read()
-                components.html(graph_html, height=600)
+        with open(SAVED_GRAPH_PATH, "r", encoding="utf-8") as file:
+            graph_html = file.read()
+            components.html(graph_html, height=600)
     except Exception as e:
         st.error(f"Błąd podczas wyświetlania grafu: {str(e)}")
+
+    # Dodaj pomocnicze informacje
+    st.info("""
+    **Wskazówki:**
+    - Możesz przeciągać węzły, aby lepiej zobaczyć relacje
+    - Zbliż kursor do węzła, aby zobaczyć więcej informacji
+    - Użyj przycisków w prawym dolnym rogu do sterowania fizyką grafu
+    - Kliknij dwukrotnie na węzeł, aby wycentrować widok
+    """)
