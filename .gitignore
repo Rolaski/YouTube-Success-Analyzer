@@ -1,6 +1,5 @@
 database/.env
 data_preparation/normalized_data.csv
-graph.html
 results/
 /models/youtube_success_model.pkl
 # PyCharm
@@ -42,4 +41,4 @@ __pycache__/
 # Wyszukiwarki i pliki indeksu
 .vscode/
 /database/.env
-/saved_graph.html
+saved_graph.html
