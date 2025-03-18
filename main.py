@@ -15,6 +15,7 @@ import os
 from arango import ArangoClient
 from dotenv import load_dotenv
 from data_preparation.graph import show_graph_page
+from database.crud import show_crud_page
 
 
 
@@ -577,7 +578,7 @@ def main():
 
     # Sidebar z nawigacją
     st.sidebar.title("Nawigacja")
-    page = st.sidebar.radio("Wybierz stronę", ["Ogólna Analiza Sukcesu", "Analiza Pojedynczego Filmu", "Graf"])
+    page = st.sidebar.radio("Wybierz stronę", ["Ogólna Analiza Sukcesu", "Analiza Pojedynczego Filmu", "Graf", "Zarządzanie bazą"])
 
     # Wczytanie danych
     try:
@@ -593,6 +594,8 @@ def main():
             show_single_video_analysis_page(df)
         elif page == "Graf":
             show_graph_page()
+        elif page == "Zarządzanie bazą":
+            show_crud_page()
 
 
     except Exception as e:
