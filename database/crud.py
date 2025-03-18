@@ -49,10 +49,26 @@ def get_videos():
 def delete_creator(creator_key):
     """
     Usuwa twórcę z bazy danych na podstawie podanego klucza.
+    Usuwa również wszystkie powiązane filmy i relacje.
     Zwraca True, jeśli operacja zakończyła się sukcesem, w przeciwnym razie False.
     """
     try:
+        # Najpierw znajdź wszystkie filmy powiązane z tym twórcą
+        query = f"FOR edge IN video_by_creator FILTER edge._from == 'creators/{creator_key}' RETURN edge._to"
+        cursor = db.aql.execute(query)
+        video_keys = [doc.split('/')[1] for doc in cursor]
+
+        # Usuń wszystkie znalezione filmy
+        for video_key in video_keys:
+            db.collection('videos').delete(video_key)
+
+        # Usuń wszystkie relacje
+        query = f"FOR edge IN video_by_creator FILTER edge._from == 'creators/{creator_key}' REMOVE edge IN video_by_creator"
+        db.aql.execute(query)
+
+        # Na koniec usuń twórcę
         db.collection('creators').delete(creator_key)
+
         return True
     except Exception as e:
         st.error(f"Błąd usuwania twórcy: {str(e)}")
@@ -162,15 +178,15 @@ def add_video(title, url, views, duration, creator_key, upload_date, likes, lang
             'views': views,
             'duration_seconds': duration,
             # Konwersja daty na string, jeśli jest obiektem datetime
-            'upload_date': upload_date.strftime('%Y-%m-%d') if isinstance(upload_date, datetime) else upload_date,
+            'upload_date': upload_date.strftime('%Y-%m-%d') if hasattr(upload_date, 'strftime') else upload_date,
             'likes': likes,
             'language': language,
             'subtitle': subtitle,
             'description': description,
             'hashtags': hashtags,
             'comment_count': comment_count,
-            'last_comment_date': last_comment_date.strftime('%Y-%m-%d') if isinstance(last_comment_date,
-                                                                                      datetime) else last_comment_date,
+            'last_comment_date': last_comment_date.strftime('%Y-%m-%d') if hasattr(last_comment_date, 'strftime') else last_comment_date,
+
             'max_quality': max_quality,
             'premiered': premiered,
             'data_collector': data_collector
@@ -329,9 +345,20 @@ def show_data_tables():
         creator_keys = [c['_key'] for c in creators]
         selected_creator = st.selectbox("Wybierz twórcę do usunięcia", creator_keys, index=None,
                                         placeholder="Wybierz twórce...")
+
+        if selected_creator:
+            # Sprawdź, ile filmów jest powiązanych z tym twórcą
+            query = f"FOR edge IN video_by_creator FILTER edge._from == 'creators/{selected_creator}' RETURN edge"
+            cursor = db.aql.execute(query)
+            related_videos_count = len(list(cursor))
+
+            if related_videos_count > 0:
+                st.warning(
+                    f"⚠️ Ten twórca ma {related_videos_count} powiązanych filmów, które również zostaną usunięte.")
+
         if st.button("Usuń twórcę"):
             if delete_creator(selected_creator):
-                with st.status("✅ Twórca został usunięty!", expanded=True) as status:
+                with st.status("✅ Twórca i wszystkie jego filmy zostały usunięte!", expanded=True) as status:
                     time.sleep(3)
                     status.update(state="complete")
                 st.rerun()
