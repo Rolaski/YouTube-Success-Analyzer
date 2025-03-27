@@ -3,12 +3,24 @@
 ## Project Overview
 The **YouTube Success Analyzer** is an academic project designed to analyze the success rate of YouTube content creators using graph databases. The system leverages ArangoDB to model relationships between creators, videos, hashtags, and languages, providing insights into what factors contribute to a creator's success.
 
+## Prerequisites
+- Docker installed on your system
+- Python 3.8 or higher
+- pip package manager
+
 ## Technologies Used
 - **Database:** ArangoDB (Graph Database)
 - **Backend:** Python
-- **Libraries:** `pyArango`, `dotenv`, `csv`
-- **Visualization & API:** Streamlit (Planned)
-- **DevOps:** Docker (Optional)
+- **Libraries:** 
+  - `python-arango` - ArangoDB Python driver
+  - `pandas` - Data manipulation
+  - `streamlit` - Web interface
+  - `scikit-learn` - Machine learning models
+  - `plotly` - Data visualization
+  - `networkx` - Graph visualization
+  - `python-dotenv` - Environment configuration
+- **DevOps:** Docker
+
 
 ## Project Structure
 ```
@@ -16,11 +28,28 @@ project-root/
 │
 ├── data_preparation/
 │   ├── data.csv                # Dataset with YouTube data
-│   ├── import_data.py          # Script to import data into ArangoDB
-│   ├── clearing_db.py          # Script to clear all collections from ArangoDB
-│   └── .env-example            # Example environment file
+│   ├── data_normalization.py   # Data normalization script
+│   ├── graph.py                # Graph visualization module
+│   └── normalized_data.csv     # Processed dataset
 │
-└── README.md                  # Project documentation
+├── database/
+│   ├── crud.py                # CRUD operations for ArangoDB
+│   ├── import_data.py         # Data import script
+│   ├── clearing_db.py         # Database cleanup script
+│   ├── validate_import.py     # Import validation script
+│   └── .env                   # Database configuration
+│
+├── models/
+│   ├── model.py               # Machine learning model implementation
+│   └── youtube_success_model.pkl  # Trained model file
+│
+├── results/
+│   ├── actual_vs_predicted.png  # Model performance visualization
+│   └── feature_importance.png   # Feature importance plot
+│
+├── main.py                     # Main application file
+├── requirements.txt            # Python dependencies
+└── README.md                   # Project documentation
 ```
 
 ## Dataset
@@ -53,41 +82,73 @@ The dataset used in this project is [YouTube Channel and Influencer Analysis](ht
 
 
 ## How to Run the Project
-### 1. Setup Environment
-- Install ArangoDB and run the server locally.
-- Create a database with the desired name.
+### 1. Docker Setup
+```bash
+# Pull and run ArangoDB container
+docker run -e ARANGO_ROOT_PASSWORD=root -p 8529:8529 -d --name arangodb arangodb:latest
 
-### 2. Install Dependencies
+# Verify container is running
+docker ps
+```
+
+### 2. Database Setup
+1. Access ArangoDB web interface at `http://localhost:8529`
+2. Login with default credentials:
+   - Username: root
+   - Password: root
+3. Create a new database named `youtube_analysis`
+
+### 3. Install Python Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment Variables
-Create a `.env` file based on `.env-example` and set the following variables:
+### 4. Configure Environment Variables
+Create a `.env` file in the `database/` folder with:
 ```
-ARANGO_USERNAME=your_username
-ARANGO_PASSWORD=your_password
-ARANGO_DATABASE=your_database_name
+ARANGO_USERNAME=root
+ARANGO_PASSWORD=root
+ARANGO_DATABASE=youtube_analysis
 ```
 
-### 4. Import Data
-Navigate to the `data_preparation` folder and run:
+### 5. Import Data
 ```bash
+cd data_preparation
 python import_data.py
 ```
-
-### 5. Clear Database (Optional)
-To clear all collections from the database, run:
+### 6. Run the Application
 ```bash
-python clearing_db.py
+streamlit run main.py
 ```
+The application will be available at `http://localhost:8501`
 
 ## Database Structure
-- **Creators**: Nodes representing content creators
-- **Videos**: Nodes representing YouTube videos
-- **HasCreator**: Edges connecting creators to their videos
-- **InLanguage**: Edges connecting videos to their language
-- **HasHashtag**: Edges connecting videos to hashtags
+- **creators**: Collection storing content creator information
+- **videos**: Collection containing YouTube video details
+- **video_by_creator**: Edge collection connecting videos to their creators
+
+### creators
+- Creator name
+- Channel URL
+- Total subscribers
+- Total channel views
+- Channel statistics
+
+### videos
+- Video title
+- Video views
+- Duration
+- Upload date
+- Likes count
+- Comments count
+- Video description
+- Language
+- Quality metrics
+
+### video_by_creator
+- Edge collection linking videos to their creators
+- Contains references to both creator and video documents
+- Represents the ownership relationship between creators and their content
 
 ## Future Features
 - Data visualization with Streamlit
