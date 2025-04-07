@@ -16,7 +16,7 @@ from arango import ArangoClient
 from dotenv import load_dotenv
 from data_preparation.graph import show_graph_page
 from database.crud import show_crud_page
-
+from data_preparation.language_graph import show_language_analysis_page
 
 
 # Załaduj plik .env z folderu /database
@@ -578,7 +578,7 @@ def main():
 
     # Sidebar z nawigacją
     st.sidebar.title("Nawigacja")
-    page = st.sidebar.radio("Wybierz stronę", ["Ogólna Analiza Sukcesu", "Analiza Pojedynczego Filmu", "Graf", "Zarządzanie bazą"])
+    page = st.sidebar.radio("Wybierz stronę", ["Ogólna Analiza Sukcesu", "Analiza Pojedynczego Filmu", "Graf", "Graf zależności twórca-język", "Zarządzanie bazą"])
 
     # Wczytanie danych
     try:
@@ -594,6 +594,8 @@ def main():
             show_single_video_analysis_page(df)
         elif page == "Graf":
             show_graph_page()
+        elif page == "Graf zależności twórca-język":
+            show_language_analysis_page()
         elif page == "Zarządzanie bazą":
             show_crud_page()
 
