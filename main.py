@@ -17,8 +17,6 @@ from dotenv import load_dotenv
 from data_preparation.graph import show_graph_page
 from database.crud import show_crud_page
 
-
-
 # Załaduj plik .env z folderu /database
 env_path = os.path.join(os.path.dirname(__file__), 'database', '.env')
 
@@ -262,7 +260,7 @@ def analyze_success_patterns(df):
         # Usuwanie skrajnych wartości dla lepszej wizualizacji
         q_low = df['duration_seconds'].quantile(0.01)
         q_high = df['duration_seconds'].quantile(0.99)
-        df_filtered = df[(df['duration_seconds'] >= q_low) & (df['duration_seconds'] <= q_high)]
+        df_filtered = df[(df['duration_seconds'] >= q_low) & (df['duration_seconds'] <= q_high)].copy()
 
         # Przypisanie z użyciem .loc aby uniknąć SettingWithCopyWarning
         df_filtered.loc[:, 'duration_minutes'] = df_filtered['duration_seconds'] / 60
@@ -275,7 +273,10 @@ def analyze_success_patterns(df):
         )
 
         # Obliczanie średniej liczby wyświetleń dla każdego przedziału
-        duration_analysis = df_filtered.groupby('duration_category')['views'].agg(['mean', 'count']).reset_index()
+        duration_analysis = df_filtered.groupby('duration_category', observed=True)['views'].agg(
+            ['mean', 'count', 'median']).reset_index()
+        duration_analysis = duration_analysis[
+            duration_analysis['count'] >= 3]  # Minimalna liczba filmów dla wiarygodności
 
         # Dodanie do wyników
         insights['best_duration'] = duration_analysis.iloc[duration_analysis['mean'].argmax()]['duration_category']
@@ -284,8 +285,10 @@ def analyze_success_patterns(df):
     # 2. Język a wyświetlenia
     if 'language' in df.columns and 'views' in df.columns:
         # Obliczanie średniej liczby wyświetleń dla każdego języka
-        language_analysis = df.groupby('language')['views'].agg(['mean', 'count']).reset_index()
-        language_analysis = language_analysis[language_analysis['count'] >= 5]  # Minimum 5 filmów dla wiarygodności
+        language_analysis = df.groupby('language', observed=True)['views'].agg(
+            ['mean', 'count', 'median', 'sum']).reset_index()
+        language_analysis = language_analysis[language_analysis['count'] >= 3]  # Minimum 3 filmy dla wiarygodności
+        language_analysis = language_analysis.sort_values('mean', ascending=False)
 
         # Dodanie do wyników
         top_languages = language_analysis.sort_values('mean', ascending=False).head(5)
@@ -301,7 +304,9 @@ def analyze_success_patterns(df):
         )
 
         # Obliczanie średniej liczby wyświetleń dla każdej kategorii
-        engagement_analysis = df.groupby('engagement_category')['views'].agg(['mean', 'count']).reset_index()
+        engagement_analysis = df.groupby('engagement_category', observed=True)['views'].agg(
+            ['mean', 'count', 'median']).reset_index()
+        engagement_analysis = engagement_analysis[engagement_analysis['count'] >= 2]  # Minimum 2 filmy w kategorii
 
         # Dodanie do wyników
         insights['engagement_analysis'] = engagement_analysis
@@ -316,7 +321,10 @@ def analyze_success_patterns(df):
         )
 
         # Obliczanie średniej liczby wyświetleń dla każdej kategorii
-        video_count_analysis = df.groupby('video_count_category')['views'].agg(['mean', 'count']).reset_index()
+        video_count_analysis = df.groupby('video_count_category', observed=True)['views'].agg(
+            ['mean', 'count', 'median']).reset_index()
+        video_count_analysis = video_count_analysis[
+            video_count_analysis['count'] >= 2]  # Minimum 2 filmy dla wiarygodności
 
         # Dodanie do wyników
         insights['video_count_analysis'] = video_count_analysis
@@ -332,12 +340,13 @@ def analyze_success_patterns(df):
         )
 
         # Obliczanie średniej liczby wyświetleń dla każdej kategorii
-        hashtag_analysis = df.groupby('hashtag_category')['views'].agg(['mean', 'count']).reset_index()
+        hashtag_analysis = df.groupby('hashtag_category', observed=True)['views'].agg(
+            ['mean', 'count', 'median']).reset_index()
+        hashtag_analysis = hashtag_analysis[hashtag_analysis['count'] >= 2]  # Minimum 2 filmy dla wiarygodności
 
         # Dodanie do wyników
         insights['hashtag_analysis'] = hashtag_analysis
 
-    # 6. Identyfikacja sukcesu - definiowanie progu sukcesu (top 25% wyświetleń)
     if 'views' in df.columns:
         success_threshold = df['views'].quantile(0.75)
         df['is_successful'] = df['views'] >= success_threshold
@@ -356,11 +365,26 @@ def analyze_success_patterns(df):
 
         for col in numeric_cols:
             if col in df.columns:
-                comparison[col] = {
-                    'successful_mean': success_df[col].mean(),
-                    'regular_mean': regular_df[col].mean(),
-                    'difference_pct': ((success_df[col].mean() / regular_df[col].mean()) - 1) * 100
-                }
+                # Sprawdzamy, czy w obu grupach są dane
+                if not success_df[col].isna().all() and not regular_df[col].isna().all():
+                    success_mean = success_df[col].mean()
+                    regular_mean = regular_df[col].mean()
+
+                    # Unikamy dzielenia przez zero lub wartości bardzo bliskie zeru
+                    if abs(regular_mean) > 1e-10:  # Używamy małej wartości zamiast dokładnego zera
+                        diff_pct = ((success_mean / regular_mean) - 1) * 100
+                    else:
+                        diff_pct = 0 if abs(success_mean) < 1e-10 else 100  # 100% więcej jeśli success_mean > 0
+
+                    # Unikamy skrajnie dużych wartości, które mogą zaburzyć wykres
+                    if abs(diff_pct) > 1000:
+                        diff_pct = 1000 if diff_pct > 0 else -1000
+
+                    comparison[col] = {
+                        'successful_mean': success_mean,
+                        'regular_mean': regular_mean,
+                        'difference_pct': diff_pct
+                    }
 
         insights['success_vs_regular'] = comparison
 
@@ -578,7 +602,9 @@ def main():
 
     # Sidebar z nawigacją
     st.sidebar.title("Nawigacja")
-    page = st.sidebar.radio("Wybierz stronę", ["Ogólna Analiza Sukcesu", "Analiza Pojedynczego Filmu", "Graf", "Zarządzanie bazą"])
+    page = st.sidebar.radio("Wybierz stronę",
+                            ["Ogólna Analiza Sukcesu", "Analiza Pojedynczego Filmu", "Graf", "Zależności Językowe",
+                             "Zarządzanie bazą"])
 
     # Wczytanie danych
     try:
@@ -594,9 +620,11 @@ def main():
             show_single_video_analysis_page(df)
         elif page == "Graf":
             show_graph_page()
+        elif page == "Zależności Językowe":
+            from data_preparation.language_graph import show_language_page
+            show_language_page()
         elif page == "Zarządzanie bazą":
             show_crud_page()
-
 
     except Exception as e:
         st.error(f"Wystąpił błąd podczas pobierania danych: {str(e)}")
@@ -610,9 +638,14 @@ def main():
 
         if page == "Ogólna Analiza Sukcesu":
             show_general_success_page(df)
-        else:
-            # st.write(df.columns.tolist())
+        elif page == "Analiza Pojedynczego Filmu":
             show_single_video_analysis_page(df)
+        elif page == "Graf":
+            st.warning("Funkcja grafu nie jest dostępna w trybie przykładowych danych.")
+        elif page == "Zależności Językowe":
+            st.warning("Funkcja zależności językowych nie jest dostępna w trybie przykładowych danych.")
+        elif page == "Zarządzanie bazą":
+            st.warning("Funkcja zarządzania bazą nie jest dostępna w trybie przykładowych danych.")
 
 
 # Funkcja do tworzenia przykładowych danych (w przypadku problemów z bazą danych)
@@ -673,204 +706,694 @@ def create_sample_data():
 def show_general_success_page(df):
     st.header("Ogólna Analiza Sukcesu na YouTube")
 
+    # Definiujemy porównywalne nazwy cech na początku funkcji, aby były dostępne w całym jej zakresie
+    feature_names = {
+        'duration_seconds': 'Czas trwania (s)',
+        'likes': 'Polubienia',
+        'comment_count': 'Liczba komentarzy',
+        'hashtag_count': 'Liczba hashtagów',
+        'creator_total_subscribers': 'Subskrybenci kanału',
+        'creator_video_count': 'Liczba filmów na kanale',
+        'creator_community_engagement': 'Zaangażowanie społeczności'
+    }
+
     with st.spinner('Analizowanie wzorców sukcesu...'):
         insights = analyze_success_patterns(df)
 
-    # Podsumowanie danych
-    st.subheader("📊 Podsumowanie Danych")
-    col1, col2, col3, col4 = st.columns(4)
+    # Filtry globalne
+    st.sidebar.subheader("Filtry Analizy")
 
-    with col1:
-        st.metric("Liczba Filmów", f"{len(df):,}")
+    # Filtry języka, jeśli są dostępne
+    if 'language' in df.columns:
+        languages = df['language'].dropna().unique()
+        languages = sorted([lang for lang in languages if lang])
 
-    with col2:
-        st.metric("Średnia Liczba Wyświetleń", f"{int(df['views'].mean()):,}")
+        if languages:
+            selected_languages = st.sidebar.multiselect(
+                "Filtruj według języka",
+                options=["Wszystkie"] + languages,
+                default=["Wszystkie"]
+            )
 
-    with col3:
-        st.metric("Mediana Wyświetleń", f"{int(df['views'].median()):,}")
+            if selected_languages and "Wszystkie" not in selected_languages:
+                df_filtered = df[df['language'].isin(selected_languages)]
+                st.sidebar.info(f"Filtrowanie dla języków: {', '.join(selected_languages)}")
+            else:
+                df_filtered = df
+        else:
+            df_filtered = df
+    else:
+        df_filtered = df
 
-    with col4:
-        if 'is_successful' in df.columns:
-            success_rate = df['is_successful'].mean() * 100
-            st.metric("Procent Filmów z Sukcesem", f"{success_rate:.1f}%")
+    # Dodanie zakładek dla lepszej organizacji
+    tabs = st.tabs(["Podsumowanie", "Czas Trwania", "Języki", "Zaangażowanie", "Hashtagi", "Analiza Sukcesu"])
 
-    # Próg sukcesu
-    if 'success_threshold' in insights:
-        st.info(
-            f"📈 **Próg sukcesu**: Film uznajemy za sukces, gdy ma co najmniej **{int(insights['success_threshold']):,}** wyświetleń (górne 25% filmów).")
+    with tabs[0]:  # Podsumowanie
+        # Podsumowanie danych
+        st.subheader("📊 Podsumowanie Danych")
 
-    # 1. Czas trwania a sukces
-    if 'duration_analysis' in insights:
-        st.write("### ⏱️ Optymalny Czas Trwania Filmu")
+        # Statystyki w karcie
+        with st.container():
+            col1, col2, col3, col4 = st.columns(4)
 
-        # Wykres
-        fig = px.bar(
-            insights['duration_analysis'],
-            x='duration_category',
-            y='mean',
-            title="Średnia liczba wyświetleń według czasu trwania filmu",
-            labels={'duration_category': 'Czas trwania', 'mean': 'Średnia liczba wyświetleń'},
-            color='mean',
-            text_auto='.2s'
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            with col1:
+                st.metric("Liczba Filmów", f"{len(df_filtered):,}")
 
-        if 'best_duration' in insights:
-            st.success(f"🏆 Najlepiej sprawdzają się filmy o długości **{insights['best_duration']}**.")
+            with col2:
+                st.metric("Średnia Wyświetleń", f"{int(df_filtered['views'].mean()):,}")
 
-    # 2. Język a sukces
-    if 'top_languages' in insights:
-        st.write("### 🌐 Najpopularniejsze Języki")
+            with col3:
+                st.metric("Mediana Wyświetleń", f"{int(df_filtered['views'].median()):,}")
 
-        # Wykres
-        fig = px.bar(
-            insights['top_languages'],
-            x='language',
-            y='mean',
-            title="Średnia liczba wyświetleń według języka",
-            labels={'language': 'Język', 'mean': 'Średnia liczba wyświetleń'},
-            color='mean',
-            text_auto='.2s'
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            with col4:
+                if 'is_successful' in df_filtered.columns:
+                    success_rate = df_filtered['is_successful'].mean() * 100
+                    st.metric("Procent Filmów z Sukcesem", f"{success_rate:.1f}%")
 
-        top_language = insights['top_languages'].iloc[0]['language']
-        st.success(f"🏆 Najlepiej sprawdza się język **{top_language}**.")
+        # Próg sukcesu
+        if 'success_threshold' in insights:
+            st.info(
+                f"📈 **Próg sukcesu**: Film uznajemy za sukces, gdy ma co najmniej **{int(insights['success_threshold']):,}** wyświetleń (górne 25% filmów).")
 
-    # 3. Zaangażowanie społeczności a sukces
-    if 'engagement_analysis' in insights:
-        st.write("### 👥 Wpływ Zaangażowania Społeczności")
+        # Korelacja między czynnikami (nowa sekcja)
+        if 'correlation' in insights and 'views_correlation' in insights['correlation']:
+            st.subheader("📊 Korelacje z Liczbą Wyświetleń")
 
-        # Wykres
-        fig = px.bar(
-            insights['engagement_analysis'],
-            x='engagement_category',
-            y='mean',
-            title="Średnia liczba wyświetleń według zaangażowania społeczności (postów na tydzień)",
-            labels={'engagement_category': 'Posty na tydzień', 'mean': 'Średnia liczba wyświetleń'},
-            color='mean',
-            text_auto='.2s'
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            views_corr = insights['correlation']['views_correlation']
 
-        best_engagement = insights['engagement_analysis'].iloc[insights['engagement_analysis']['mean'].argmax()][
-            'engagement_category']
-        st.success(
-            f"🏆 Najlepiej sprawdza się zaangażowanie społeczności na poziomie **{best_engagement}** postów na tydzień.")
+            if not views_corr.empty:
+                # Tworzymy DataFrame do wyświetlenia
+                corr_df = pd.DataFrame({
+                    'Czynnik': views_corr.index,
+                    'Korelacja': views_corr.values
+                })
 
-        # 4. Wpływ liczby filmów na kanale na sukces
-        if 'video_count_analysis' in insights:
-            st.write("### 📼 Wpływ Liczby Filmów na Kanale")
+                # Bardziej przyjazne nazwy czynników
+                factor_names = {
+                    'duration_seconds': 'Czas trwania (s)',
+                    'likes': 'Polubienia',
+                    'comment_count': 'Liczba komentarzy',
+                    'hashtag_count': 'Liczba hashtagów',
+                    'creator_total_subscribers': 'Subskrybenci kanału',
+                    'creator_video_count': 'Liczba filmów na kanale',
+                    'creator_community_engagement': 'Zaangażowanie społeczności'
+                }
+
+                corr_df['Czynnik'] = corr_df['Czynnik'].map(lambda x: feature_names.get(x, x))
+
+                # Sortowanie według wartości bezwzględnej korelacji (najsilniejsze na górze)
+                corr_df['Abs_Corr'] = abs(corr_df['Korelacja'])
+                corr_df = corr_df.sort_values('Abs_Corr', ascending=False).drop(columns=['Abs_Corr'])
+
+                # Wykres słupkowy z korelacjami
+                fig = px.bar(
+                    corr_df,
+                    x='Korelacja',
+                    y='Czynnik',
+                    title="Korelacja czynników z liczbą wyświetleń",
+                    color='Korelacja',
+                    color_continuous_scale=['red', 'white', 'green'],  # Czerwony dla negatywnej, zielony dla pozytywnej
+                    range_color=[-1, 1],  # Zakres korelacji od -1 do 1
+                    orientation='h'  # Poziomy układ
+                )
+
+                # Dostosowanie wykresu
+                fig.update_layout(
+                    xaxis_title="Współczynnik korelacji",
+                    yaxis_title="",
+                    xaxis=dict(tickvals=[-1, -0.5, 0, 0.5, 1])
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Komentarze na temat korelacji
+                if 'correlation_insights' in insights and insights['correlation_insights']:
+                    with st.expander("📝 Interpretacja korelacji", expanded=True):
+                        for insight in insights['correlation_insights']:
+                            st.write(insight)
+
+                        st.info(
+                            "**Uwaga**: Korelacja nie oznacza przyczynowości. Silna korelacja wskazuje jedynie na związek między zmiennymi, nie na to, że jedna zmienna powoduje zmiany w drugiej.")
+
+        # Podsumowanie głównych czynników sukcesu
+        st.subheader("🌟 Kluczowe Czynniki Sukcesu")
+
+        # Zbieramy wszystkie dostępne insighty
+        success_factors = []
+
+        # Dodaj informację o progu sukcesu (zawsze dostępna)
+        if 'success_threshold' in insights:
+            success_factors.append(("📈 Próg sukcesu",
+                                    f"Film uznajemy za sukces, gdy ma co najmniej **{int(insights['success_threshold']):,}** wyświetleń (górne 25% filmów)."))
+
+        if 'duration_insights' in insights and 'comment' in insights['duration_insights'] and \
+                insights['duration_insights']['comment']:
+            success_factors.append(("⏱️ Czas trwania", insights['duration_insights']['comment']))
+        elif 'best_duration' in insights:
+            success_factors.append(
+                ("⏱️ Czas trwania", f"Najlepiej sprawdzają się filmy o długości **{insights['best_duration']}**."))
+
+        if 'language_insights' in insights and 'comment' in insights['language_insights'] and \
+                insights['language_insights']['comment']:
+            success_factors.append(("🌐 Język", insights['language_insights']['comment']))
+        elif 'top_languages' in insights and len(insights['top_languages']) > 0:
+            top_language = insights['top_languages'].iloc[0]['language']
+            success_factors.append(("🌐 Język", f"Najlepiej sprawdza się język **{top_language}**."))
+
+        if 'engagement_insights' in insights and 'comment' in insights['engagement_insights'] and \
+                insights['engagement_insights']['comment']:
+            success_factors.append(("👥 Zaangażowanie społeczności", insights['engagement_insights']['comment']))
+        elif 'engagement_analysis' in insights and len(insights['engagement_analysis']) > 0:
+            best_engagement = \
+                insights['engagement_analysis'].iloc[insights['engagement_analysis']['mean'].argmax()][
+                    'engagement_category']
+            success_factors.append(("👥 Zaangażowanie społeczności",
+                                    f"Najlepiej sprawdza się zaangażowanie społeczności na poziomie **{best_engagement}** postów tygodniowo."))
+
+        if 'video_count_insights' in insights and 'comment' in insights['video_count_insights'] and \
+                insights['video_count_insights']['comment']:
+            success_factors.append(("📼 Liczba filmów na kanale", insights['video_count_insights']['comment']))
+        elif 'video_count_analysis' in insights and len(insights['video_count_analysis']) > 0:
+            best_video_count = \
+                insights['video_count_analysis'].iloc[insights['video_count_analysis']['mean'].argmax()][
+                    'video_count_category']
+            success_factors.append(
+                ("📼 Liczba filmów na kanale", f"Najlepiej sprawdzają się kanały z **{best_video_count}** filmami."))
+
+        if 'hashtag_insights' in insights and 'comment' in insights['hashtag_insights'] and \
+                insights['hashtag_insights']['comment']:
+            success_factors.append(("🔖 Hashtagi", insights['hashtag_insights']['comment']))
+        elif 'hashtag_analysis' in insights and len(insights['hashtag_analysis']) > 0:
+            best_hashtag_count = insights['hashtag_analysis'].iloc[insights['hashtag_analysis']['mean'].argmax()][
+                'hashtag_category']
+            success_factors.append(
+                ("🔖 Hashtagi", f"Najlepiej sprawdzają się filmy z **{best_hashtag_count}** hashtagami."))
+
+            # Dodajemy czynnik na podstawie porównania cech (zawsze jeśli mamy dane)
+        if 'success_vs_regular' in insights and len(insights['success_vs_regular']) > 0:
+            # Znajdowanie cechy z największą różnicą
+            features_with_diffs = []
+            for feature, values in insights['success_vs_regular'].items():
+                if 'difference_pct' in values and pd.notna(values['difference_pct']):
+                    features_with_diffs.append((feature, values['difference_pct']))
+
+            if features_with_diffs:
+                top_feature, diff_pct = max(features_with_diffs, key=lambda x: abs(x[1]))
+                feature_name = feature_names.get(top_feature, top_feature)
+
+                if diff_pct > 0:
+                    success_factors.append(
+                        ("🔄 Największa różnica",
+                         f"Filmy z sukcesem mają o **{diff_pct:.1f}%** wyższą wartość cechy **{feature_name}** niż pozostałe filmy.")
+                    )
+                else:
+                    success_factors.append(
+                        ("🔄 Największa różnica",
+                         f"Filmy z sukcesem mają o **{abs(diff_pct):.1f}%** niższą wartość cechy **{feature_name}** niż pozostałe filmy.")
+                    )
+
+            # Dodanie rekomendacji na podstawie korelacji
+            if 'correlation' in insights and 'top_positive' in insights['correlation'] and not insights['correlation'][
+                'top_positive'].empty:
+                top_corr_feature = insights['correlation']['top_positive'].index[0]
+                top_corr_value = insights['correlation']['top_positive'].values[0]
+
+                if top_corr_value > 0.1:  # Nawet słaba korelacja może być interesująca
+                    feature_name = feature_names.get(top_corr_feature, top_corr_feature)
+
+                if top_corr_value > 0.5:
+                    strength = "silna"
+                elif top_corr_value > 0.3:
+                    strength = "średnia"
+                else:
+                    strength = "słaba"
+
+                success_factors.append(
+                    ("📊 Korelacja",
+                     f"Istnieje **{strength}** pozytywna korelacja ({top_corr_value:.2f}) między liczbą wyświetleń a cechą **{feature_name}**.")
+                )
+
+        if success_factors:
+            # Wyświetlamy karty z czynnikami sukcesu
+            for title, comment in success_factors:
+                st.write(f"**{title}**: {comment}")
+        else:
+            st.info("Brak wystarczających danych do określenia kluczowych czynników sukcesu.")
+
+            # Dodaj sugestie, co można zrobić, aby uzyskać lepsze insighty
+            st.write("Aby uzyskać więcej insightów, spróbuj:")
+            st.write("1. Dodać więcej danych do analizy")
+            st.write(
+                "2. Upewnić się, że dane zawierają zróżnicowane wartości w kolumnach takich jak liczba hashtagów, czas trwania, itp.")
+            st.write("3. Sprawdzić, czy dane zawierają filmy z różnych kategorii i języków")
+
+    with tabs[1]:  # Czas Trwania
+        # 1. Czas trwania a sukces
+        st.subheader("⏱️ Optymalny Czas Trwania Filmu")
+
+        if 'duration_analysis' in insights:
+            # Dodaj filtr dla wykresu czasu trwania
+            duration_df = insights['duration_analysis']
 
             # Wykres
             fig = px.bar(
-                insights['video_count_analysis'],
-                x='video_count_category',
+                duration_df,
+                x='duration_category',
                 y='mean',
-                title="Średnia liczba wyświetleń według liczby filmów na kanale",
-                labels={'video_count_category': 'Liczba filmów', 'mean': 'Średnia liczba wyświetleń'},
+                title="Średnia liczba wyświetleń według czasu trwania filmu",
+                labels={'duration_category': 'Czas trwania', 'mean': 'Średnia liczba wyświetleń'},
                 color='mean',
-                text_auto='.2s'
+                text_auto='.2s',
+                custom_data=['count', 'median']  # Dodatkowe dane dla tooltipa
             )
+
+            # Dostosowanie tooltipa
+            fig.update_traces(
+                hovertemplate="<b>%{x}</b><br>Średnia wyświetleń: %{y:,.0f}<br>Mediana wyświetleń: %{customdata[1]:,.0f}<br>Liczba filmów: %{customdata[0]}"
+            )
+
             st.plotly_chart(fig, use_container_width=True)
 
-            best_video_count = insights['video_count_analysis'].iloc[insights['video_count_analysis']['mean'].argmax()][
-                'video_count_category']
-            st.success(f"🏆 Najlepiej sprawdzają się kanały z **{best_video_count}** filmami.")
+            if 'best_duration' in insights:
+                best_duration = insights['best_duration']
 
-        # 5. Wpływ hashtagów na sukces
-        if 'hashtag_analysis' in insights:
-            st.write("### 🔖 Wpływ Hashtagów")
+                # Dodanie komentarza analitycznego
+                if 'duration_insights' in insights and 'comment' in insights['duration_insights']:
+                    st.success(f"🏆 {insights['duration_insights']['comment']}")
+                else:
+                    st.success(f"🏆 Najlepiej sprawdzają się filmy o długości **{best_duration}**.")
+
+                # Dodatkowe statystyki w ekspanderze
+                with st.expander("📊 Szczegółowe statystyki"):
+                    st.dataframe(duration_df)
+        else:
+            st.info("Niewystarczające dane do analizy wpływu czasu trwania na wyświetlenia.")
+
+    with tabs[2]:  # Języki
+        # 2. Język a sukces
+        st.subheader("🌐 Najpopularniejsze Języki")
+
+        if 'top_languages' in insights:
+            # Wykres
+            language_df = insights['top_languages']
+
+            # Dodajemy kolumnę całkowitych wyświetleń dla każdego języka
+            if 'sum' not in language_df.columns:
+                language_df['sum'] = language_df['mean'] * language_df['count']
+
+            # Opcje sortowania
+            sort_options = ["Średnia liczba wyświetleń", "Całkowita liczba wyświetleń", "Liczba filmów"]
+            sort_by = st.radio("Sortuj według:", sort_options, horizontal=True)
+
+            if sort_by == "Średnia liczba wyświetleń":
+                language_df = language_df.sort_values('mean', ascending=False)
+                y_column = 'mean'
+                title = "Średnia liczba wyświetleń według języka"
+                y_label = "Średnia liczba wyświetleń"
+            elif sort_by == "Całkowita liczba wyświetleń":
+                language_df = language_df.sort_values('sum', ascending=False)
+                y_column = 'sum'
+                title = "Całkowita liczba wyświetleń według języka"
+                y_label = "Całkowita liczba wyświetleń"
+            else:  # Liczba filmów
+                language_df = language_df.sort_values('count', ascending=False)
+                y_column = 'count'
+                title = "Liczba filmów według języka"
+                y_label = "Liczba filmów"
+
+            # Ograniczamy do top 10 języków dla przejrzystości
+            language_df = language_df.head(10)
+
+            fig = px.bar(
+                language_df,
+                x='language',
+                y=y_column,
+                title=title,
+                labels={'language': 'Język', y_column: y_label},
+                color=y_column,
+                text_auto='.2s',
+            )
+
+            # Bezpieczne dodanie tooltipów
+            tooltip_data = []
+            tooltip_template = "<b>%{x}</b><br>" + f"{y_label}: %{{y:,.0f}}<br>Liczba filmów: %{{customdata[0]}}"
+
+            if 'count' in language_df.columns:
+                tooltip_data.append('count')
+
+                if 'median' in language_df.columns and y_column != 'median':
+                    tooltip_data.append('median')
+                    tooltip_template += "<br>Mediana wyświetleń: %{customdata[1]:,.0f}"
+
+            if tooltip_data:
+                fig.update_traces(
+                    hovertemplate=tooltip_template,
+                    customdata=language_df[tooltip_data].values
+                )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Dodanie komentarza analitycznego
+            if 'language_insights' in insights and 'comment' in insights['language_insights']:
+                st.success(f"🏆 {insights['language_insights']['comment']}")
+            else:
+                top_language = language_df.iloc[0]['language']
+                st.success(f"🏆 Najlepiej sprawdza się język **{top_language}**.")
+
+            # Dodatkowe statystyki w ekspanderze
+            with st.expander("📊 Szczegółowe statystyki językowe"):
+                st.dataframe(language_df)
+        else:
+            st.info("Niewystarczające dane do analizy wpływu języka na wyświetlenia.")
+
+    with tabs[3]:  # Zaangażowanie
+        # 3. Zaangażowanie społeczności a sukces
+        st.subheader("👥 Wpływ Zaangażowania Społeczności")
+
+        if 'engagement_analysis' in insights:
+            engagement_df = insights['engagement_analysis']
 
             # Wykres
             fig = px.bar(
-                insights['hashtag_analysis'],
+                engagement_df,
+                x='engagement_category',
+                y='mean',
+                title="Średnia liczba wyświetleń według zaangażowania społeczności (postów na tydzień)",
+                labels={'engagement_category': 'Posty na tydzień', 'mean': 'Średnia liczba wyświetleń'},
+                color='mean',
+                text_auto='.2s',
+            )
+
+            # Bezpieczne dodanie tooltipów
+            tooltip_data = []
+            tooltip_template = "<b>%{x}</b><br>Średnia wyświetleń: %{y:,.0f}<br>Liczba filmów: %{customdata[0]}"
+
+            if 'count' in engagement_df.columns:
+                tooltip_data.append('count')
+
+                if 'median' in engagement_df.columns:
+                    tooltip_data.append('median')
+                    tooltip_template += "<br>Mediana wyświetleń: %{customdata[1]:,.0f}"
+
+            if tooltip_data:
+                fig.update_traces(
+                    hovertemplate=tooltip_template,
+                    customdata=engagement_df[tooltip_data].values
+                )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Dodanie komentarza analitycznego
+            if 'engagement_insights' in insights and 'comment' in insights['engagement_insights']:
+                st.success(f"🏆 {insights['engagement_insights']['comment']}")
+            else:
+                best_engagement = engagement_df.iloc[engagement_df['mean'].argmax()]['engagement_category']
+                st.success(
+                    f"🏆 Najlepiej sprawdza się zaangażowanie społeczności na poziomie **{best_engagement}** postów na tydzień.")
+
+            # Szczegółowe dane
+            with st.expander("📊 Szczegółowe statystyki zaangażowania"):
+                st.dataframe(engagement_df)
+
+            # Dodatkowe wyjaśnienie jeśli są tylko ograniczone dane
+            if len(engagement_df) <= 2:
+                st.info(
+                    "⚠️ W danych występuje niewiele różnych poziomów zaangażowania społeczności. Dla bardziej szczegółowej analizy potrzebne są bardziej zróżnicowane dane.")
+        else:
+            st.info("Niewystarczające dane do analizy wpływu zaangażowania społeczności na wyświetlenia.")
+
+        # 4. Wpływ liczby filmów na kanale na sukces
+        st.subheader("📼 Wpływ Liczby Filmów na Kanale")
+
+        if 'video_count_analysis' in insights:
+            video_count_df = insights['video_count_analysis']
+
+            # Jeśli mamy mapowanie kwantyli na zakresy, dodajemy bardziej zrozumiałe etykiety
+            if 'video_count_quantile_ranges' in insights:
+                # Tworzymy mapowanie kategorii na opisy
+                category_mapping = insights['video_count_quantile_ranges']
+
+                # Tworzymy nową kolumnę z opisowymi etykietami
+                video_count_df['display_category'] = video_count_df['video_count_category'].map(
+                    lambda x: f"{x} ({category_mapping.get(x, '')})" if x in category_mapping else x
+                )
+            else:
+                video_count_df['display_category'] = video_count_df['video_count_category']
+
+                # Wykres
+                fig = px.bar(
+                    video_count_df,
+                    x='display_category',
+                    y='mean',
+                    title="Średnia liczba wyświetleń według liczby filmów na kanale",
+                    labels={'display_category': 'Liczba filmów', 'mean': 'Średnia liczba wyświetleń'},
+                    color='mean',
+                    text_auto='.2s',
+                )
+
+                # Bezpieczne dodanie tooltipów
+                tooltip_data = []
+                tooltip_template = "<b>%{x}</b><br>Średnia wyświetleń: %{y:,.0f}<br>Liczba filmów: %{customdata[0]}"
+
+                if 'count' in video_count_df.columns:
+                    tooltip_data.append('count')
+
+                    if 'median' in video_count_df.columns:
+                        tooltip_data.append('median')
+                        tooltip_template += "<br>Mediana wyświetleń: %{customdata[1]:,.0f}"
+
+                if tooltip_data:
+                    fig.update_traces(
+                        hovertemplate=tooltip_template,
+                        customdata=video_count_df[tooltip_data].values
+                    )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Dodanie komentarza analitycznego
+            if 'video_count_insights' in insights and 'comment' in insights['video_count_insights']:
+                st.success(f"🏆 {insights['video_count_insights']['comment']}")
+            else:
+                best_video_count = video_count_df.iloc[video_count_df['mean'].argmax()]['video_count_category']
+                st.success(f"🏆 Najlepiej sprawdzają się kanały z **{best_video_count}** filmami.")
+
+            # Szczegółowe dane
+            with st.expander("📊 Szczegółowe statystyki liczby filmów"):
+                st.dataframe(video_count_df)
+        else:
+            st.info("Niewystarczające dane do analizy wpływu liczby filmów na wyświetlenia.")
+
+    with tabs[4]:  # Hashtagi
+        # 5. Wpływ hashtagów na sukces
+        st.subheader("🔖 Wpływ Hashtagów")
+
+        if 'hashtag_analysis' in insights:
+            hashtag_df = insights['hashtag_analysis']
+
+            # Wykres
+            fig = px.bar(
+                hashtag_df,
                 x='hashtag_category',
                 y='mean',
                 title="Średnia liczba wyświetleń według liczby hashtagów",
                 labels={'hashtag_category': 'Liczba hashtagów', 'mean': 'Średnia liczba wyświetleń'},
                 color='mean',
-                text_auto='.2s'
+                text_auto='.2s',
             )
+
+            # Bezpieczne dodanie tooltipów
+            tooltip_data = []
+            tooltip_template = "<b>%{x}</b><br>Średnia wyświetleń: %{y:,.0f}<br>Liczba filmów: %{customdata[0]}"
+
+            if 'count' in hashtag_df.columns:
+                tooltip_data.append('count')
+
+                if 'median' in hashtag_df.columns:
+                    tooltip_data.append('median')
+                    tooltip_template += "<br>Mediana wyświetleń: %{customdata[1]:,.0f}"
+
+            if tooltip_data:
+                fig.update_traces(
+                    hovertemplate=tooltip_template,
+                    customdata=hashtag_df[tooltip_data].values
+                )
+
             st.plotly_chart(fig, use_container_width=True)
 
-            best_hashtag_count = insights['hashtag_analysis'].iloc[insights['hashtag_analysis']['mean'].argmax()][
-                'hashtag_category']
-            st.success(f"🏆 Najlepiej sprawdzają się filmy z **{best_hashtag_count}** hashtagami.")
+            # Dodanie komentarza analitycznego
+            if 'hashtag_insights' in insights and 'comment' in insights['hashtag_insights']:
+                st.success(f"🏆 {insights['hashtag_insights']['comment']}")
+            else:
+                best_hashtag_count = hashtag_df.iloc[hashtag_df['mean'].argmax()]['hashtag_category']
+                st.success(f"🏆 Najlepiej sprawdzają się filmy z **{best_hashtag_count}** hashtagami.")
 
+            # Szczegółowe dane
+            with st.expander("📊 Szczegółowe statystyki hashtagów"):
+                st.dataframe(hashtag_df)
+
+            # Dodatkowe wyjaśnienie jeśli są tylko ograniczone dane
+            if len(hashtag_df) <= 1:
+                st.warning(
+                    "⚠️ W danych występuje niewiele różnych wartości liczby hashtagów. Dla bardziej szczegółowej analizy potrzebne są bardziej zróżnicowane dane.")
+
+                # Histogram liczby hashtagów
+                if 'hashtag_count' in df_filtered.columns:
+                    hashtag_counts = df_filtered['hashtag_count'].dropna()
+                    if not hashtag_counts.empty:
+                        fig = px.histogram(
+                            hashtag_counts,
+                            title="Rozkład liczby hashtagów w filmach",
+                            labels={'value': 'Liczba hashtagów', 'count': 'Liczba filmów'},
+                            nbins=20
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        st.info(f"Średnia liczba hashtagów: {hashtag_counts.mean():.2f}")
+                        st.info(f"Mediana liczby hashtagów: {hashtag_counts.median()}")
+                        st.info(
+                            f"Najczęstsza liczba hashtagów: {hashtag_counts.mode().iloc[0] if not hashtag_counts.mode().empty else 'Brak danych'}")
+        else:
+            st.info("Niewystarczające dane do analizy wpływu hashtagów na wyświetlenia.")
+
+    with tabs[5]:  # Analiza Sukcesu
         # 6. Porównanie cech filmów odnoszących sukces i pozostałych
-        if 'success_vs_regular' in insights:
-            st.write("### ⚔️ Co Wyróżnia Filmy Odnoszące Sukces?")
+        st.subheader("⚔️ Co Wyróżnia Filmy Odnoszące Sukces?")
 
+        if 'success_vs_regular' in insights:
             comparison_data = []
             for feature, values in insights['success_vs_regular'].items():
-                comparison_data.append({
-                    'Cecha': feature,
-                    'Filmy z Sukcesem': values['successful_mean'],
-                    'Pozostałe Filmy': values['regular_mean'],
-                    'Różnica %': values['difference_pct']
-                })
+                # Upewnij się, że wartości nie są NaN
+                if pd.notna(values['successful_mean']) and pd.notna(values['regular_mean']) and pd.notna(
+                        values['difference_pct']):
+                    comparison_data.append({
+                        'Cecha': feature,
+                        'Filmy z Sukcesem': values['successful_mean'],
+                        'Pozostałe Filmy': values['regular_mean'],
+                        'Różnica %': values['difference_pct']
+                    })
 
-            comparison_df = pd.DataFrame(comparison_data)
+            # Jeśli nie mamy żadnych danych do porównania, dodajmy jakieś informacje
+            if not comparison_data:
+                st.warning(
+                    "Nie znaleziono wystarczających danych do porównania cech między filmami z sukcesem a pozostałymi.")
+                if 'success_threshold' in insights:
+                    st.info(
+                        f"Filmy z sukcesem to te, które mają powyżej {int(insights['success_threshold']):,} wyświetleń.")
+            else:
+                comparison_df = pd.DataFrame(comparison_data)
 
-            # Tworzenie porównywalnych nazw cech
-            feature_names = {
-                'duration_seconds': 'Czas trwania (s)',
-                'likes': 'Polubienia',
-                'comment_count': 'Liczba komentarzy',
-                'creator_total_subscribers': 'Subskrybenci kanału',
-                'creator_video_count': 'Liczba filmów na kanale',
-                'creator_community_engagement': 'Zaangażowanie społeczności',
-                'hashtag_count': 'Liczba hashtagów'
-            }
+                comparison_df['Cecha'] = comparison_df['Cecha'].map(lambda x: feature_names.get(x, x))
+                comparison_df = comparison_df.sort_values('Różnica %', ascending=False)
 
-            comparison_df['Cecha'] = comparison_df['Cecha'].map(lambda x: feature_names.get(x, x))
-            comparison_df = comparison_df.sort_values('Różnica %', ascending=False)
+                if len(comparison_df) > 0:
+                    # Wykres
+                    fig = px.bar(
+                        comparison_df,
+                        x='Cecha',
+                        y='Różnica %',
+                        title="Procentowa różnica między filmami odnoszącymi sukces a pozostałymi",
+                        color='Różnica %',
+                        color_continuous_scale=['red', 'white', 'green'],
+                        # Czerwony dla negatywnych, zielony dla pozytywnych
+                        text_auto='.1f',
+                    )
 
-            # Wykres
-            fig = px.bar(
-                comparison_df,
-                x='Cecha',
-                y='Różnica %',
-                title="Procentowa różnica między filmami odnoszącymi sukces a pozostałymi",
-                color='Różnica %',
-                text_auto='.1f'
-            )
-            st.plotly_chart(fig, use_container_width=True)
+                    # Dodaj ograniczenia osi Y dla lepszej czytelności
+                    y_values = comparison_df['Różnica %'].values
+                    if len(y_values) > 0:
+                        # Ustaw granice osi Y na podstawie danych, ale z rozsądnymi limitami
+                        y_min = max(-200, min(y_values) * 1.1)
+                        y_max = min(500, max(y_values) * 1.1)
 
-            # Tabela szczegółowa
-            st.dataframe(comparison_df)
+                        # Upewnij się, że przedział nie jest zbyt mały
+                        if abs(y_max - y_min) < 50:
+                            if y_min < 0:
+                                y_min = min(-50, y_min * 1.5)
+                            if y_max > 0:
+                                y_max = max(50, y_max * 1.5)
+
+                        fig.update_layout(yaxis_range=[y_min, y_max])
+
+                    # Bezpieczne dodanie tooltipów
+                    if 'Filmy z Sukcesem' in comparison_df.columns and 'Pozostałe Filmy' in comparison_df.columns:
+                        fig.update_traces(
+                            hovertemplate="<b>%{x}</b><br>Różnica: %{y:.1f}%<br>Filmy z sukcesem: %{customdata[0]:.2f}<br>Pozostałe filmy: %{customdata[1]:.2f}",
+                            customdata=comparison_df[['Filmy z Sukcesem', 'Pozostałe Filmy']].values
+                        )
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # Bardziej szczegółowa tabela
+                    st.subheader("Szczegółowe Porównanie Cech")
+
+                    # Formatowanie liczb w tabeli dla lepszej czytelności
+                    formatted_comparison = comparison_df.copy()
+                    formatted_comparison['Filmy z Sukcesem'] = formatted_comparison['Filmy z Sukcesem'].apply(
+                        lambda x: f"{x:.2f}")
+                    formatted_comparison['Pozostałe Filmy'] = formatted_comparison['Pozostałe Filmy'].apply(
+                        lambda x: f"{x:.2f}")
+                    formatted_comparison['Różnica %'] = formatted_comparison['Różnica %'].apply(lambda x: f"{x:.1f}%")
+
+                    st.dataframe(formatted_comparison, hide_index=True)
+
+                    # Analiza cech z największymi różnicami
+                    if len(comparison_df) > 0:
+                        top_feature = comparison_df.iloc[0]['Cecha']
+                        top_diff = comparison_df.iloc[0]['Różnica %']
+
+                        if top_diff > 0:
+                            st.success(
+                                f"🔍 **Najważniejsza różnica**: Filmy odnoszące sukces mają o **{top_diff:.1f}%** wyższą wartość cechy **{top_feature}** niż pozostałe filmy.")
+                        else:
+                            st.info(
+                                f"🔍 **Najważniejsza różnica**: Filmy odnoszące sukces mają o **{abs(top_diff):.1f}%** niższą wartość cechy **{top_feature}** niż pozostałe filmy.")
+        else:
+            st.info("Niewystarczające dane do porównania cech filmów odnoszących sukces.")
 
         # Podsumowanie
         st.subheader("📝 Podsumowanie i Rekomendacje")
 
         recommendations = []
 
-        if 'best_duration' in insights:
+        if 'duration_insights' in insights and 'best_category' in insights['duration_insights']:
+            recommendations.append(f"✅ Twórz filmy o długości **{insights['duration_insights']['best_category']}**.")
+        elif 'best_duration' in insights:
             recommendations.append(f"✅ Twórz filmy o długości **{insights['best_duration']}**.")
 
-        if 'top_languages' in insights and len(insights['top_languages']) > 0:
+        if 'language_insights' in insights and 'top_language' in insights['language_insights']:
+            recommendations.append(
+                f"✅ Jeśli to możliwe, twórz treści w języku **{insights['language_insights']['top_language']}**.")
+        elif 'top_languages' in insights and len(insights['top_languages']) > 0:
             top_language = insights['top_languages'].iloc[0]['language']
             recommendations.append(f"✅ Jeśli to możliwe, twórz treści w języku **{top_language}**.")
 
-        if 'hashtag_analysis' in insights:
+        if 'hashtag_insights' in insights and 'best_category' in insights['hashtag_insights']:
+            recommendations.append(
+                f"✅ Używaj **{insights['hashtag_insights']['best_category']}** hashtagów w swoich filmach.")
+        elif 'hashtag_analysis' in insights:
             best_hashtag_count = insights['hashtag_analysis'].iloc[insights['hashtag_analysis']['mean'].argmax()][
                 'hashtag_category']
             recommendations.append(f"✅ Używaj **{best_hashtag_count}** hashtagów w swoich filmach.")
 
-        if 'engagement_analysis' in insights:
+        if 'engagement_insights' in insights and 'best_category' in insights['engagement_insights']:
+            recommendations.append(
+                f"✅ Utrzymuj aktywność na poziomie **{insights['engagement_insights']['best_category']}** postów społecznościowych tygodniowo.")
+        elif 'engagement_analysis' in insights:
             best_engagement = insights['engagement_analysis'].iloc[insights['engagement_analysis']['mean'].argmax()][
                 'engagement_category']
             recommendations.append(
                 f"✅ Utrzymuj aktywność na poziomie **{best_engagement}** postów społecznościowych tygodniowo.")
 
-        if 'video_count_analysis' in insights:
+        if 'video_count_insights' in insights and 'best_category' in insights['video_count_insights']:
+            recommendations.append(
+                f"✅ Dąż do posiadania **{insights['video_count_insights']['best_category']}** filmów na swoim kanale.")
+        elif 'video_count_analysis' in insights:
             best_video_count = insights['video_count_analysis'].iloc[insights['video_count_analysis']['mean'].argmax()][
                 'video_count_category']
             recommendations.append(f"✅ Dąż do posiadania **{best_video_count}** filmów na swoim kanale.")
 
         if 'success_vs_regular' in insights and len(insights['success_vs_regular']) > 0:
-            # Znalezienie cechy z największą różnicą
+            # Znajdowanie cechy z największą różnicą
             top_feature = max(insights['success_vs_regular'].items(), key=lambda x: x[1]['difference_pct'])
             feature_name = feature_names.get(top_feature[0], top_feature[0])
             diff_pct = top_feature[1]['difference_pct']
@@ -879,16 +1402,30 @@ def show_general_success_page(df):
                 recommendations.append(
                     f"✅ Skup się na zwiększaniu **{feature_name}** - filmy z sukcesem mają o **{diff_pct:.1f}%** wyższą wartość tej cechy.")
 
+        # Dodanie rekomendacji na podstawie korelacji
+        if 'correlation' in insights and 'top_positive' in insights['correlation'] and not insights['correlation'][
+            'top_positive'].empty:
+            top_corr_feature = insights['correlation']['top_positive'].index[0]
+            top_corr_value = insights['correlation']['top_positive'].values[0]
+
+            if top_corr_value > 0.1:  # Nawet słaba korelacja może być interesująca
+                feature_name = feature_names.get(top_corr_feature, top_corr_feature)
+                recommendations.append(
+                    f"✅ Zwróć uwagę na **{feature_name}** - ma najsilniejszą pozytywną korelację ({top_corr_value:.2f}) z liczbą wyświetleń.")
+
         # Wyświetlenie rekomendacji
-        for rec in recommendations:
-            st.markdown(rec)
+        if recommendations:
+            for rec in recommendations:
+                st.markdown(rec)
+        else:
+            st.info("Niewystarczające dane do wygenerowania szczegółowych rekomendacji.")
 
         # Przycisk do trenowania modelu
         if st.button("Trenuj Model ML do Przewidywania Sukcesu"):
             with st.spinner('Trenowanie modelu uczenia maszynowego...'):
                 try:
                     from sklearn.impute import SimpleImputer
-                    model, feature_importance, metrics = train_model(df)
+                    model, feature_importance, metrics = train_model(df_filtered)
 
                     st.success(f"Model został wytrenowany! R² = {metrics['r2']:.3f}")
 
@@ -910,8 +1447,6 @@ def show_general_success_page(df):
 
                 except Exception as e:
                     st.error(f"Wystąpił błąd podczas trenowania modelu: {str(e)}")
-
-    # Strona analizy pojedynczego filmu
 
 
 def show_single_video_analysis_page(df):
