@@ -603,8 +603,8 @@ def main():
     # Sidebar z nawigacją
     st.sidebar.title("Nawigacja")
     page = st.sidebar.radio("Wybierz stronę",
-                            ["Ogólna Analiza Sukcesu", "Analiza Pojedynczego Filmu", "Graf", "Zależności Językowe",
-                             "Zarządzanie bazą"])
+                            ["Ogólna Analiza Sukcesu", "Analiza Pojedynczego Filmu",
+                             "Graf", "Zależności Językowe", "Zarządzanie bazą", "Finalne Podsumowanie"])
 
     # Wczytanie danych
     try:
@@ -618,6 +618,8 @@ def main():
             show_general_success_page(df)
         elif page == "Analiza Pojedynczego Filmu":
             show_single_video_analysis_page(df)
+        elif page == "Finalne Podsumowanie":
+            show_final_summary_page(df)
         elif page == "Graf":
             show_graph_page()
         elif page == "Zależności Językowe":
@@ -640,6 +642,8 @@ def main():
             show_general_success_page(df)
         elif page == "Analiza Pojedynczego Filmu":
             show_single_video_analysis_page(df)
+        elif page == "Finalne Podsumowanie":
+            show_final_summary_page(df)
         elif page == "Graf":
             st.warning("Funkcja grafu nie jest dostępna w trybie przykładowych danych.")
         elif page == "Zależności Językowe":
@@ -1577,6 +1581,326 @@ def show_single_video_analysis_page(df):
                     st.warning(
                         "Film nie osiągnął pełnego potencjału. Rozważ zmianę tytułu, miniatury, optymalizację SEO oraz analizę konkurencyjnych treści.")
 
+
+def show_final_summary_page(df):
+    st.header("🚀 Finalne Podsumowanie - Jak Odnieść Sukces na YouTube")
+
+    # Wprowadzenie
+    st.markdown("""
+    To podsumowanie zawiera kompleksowe rekomendacje i wskazówki, jak prowadzić kanał na YouTube, 
+    aby osiągnąć maksymalny sukces. Zalecenia są oparte na analizie danych z bazy, 
+    modelowaniu maszynowym oraz zależnościach wykrytych między różnymi czynnikami.
+    """)
+
+    # Analiza danych
+    with st.spinner('Analizowanie wszystkich danych i generowanie rekomendacji...'):
+        # Pobieranie insightów z różnych metod analizy
+        insights = analyze_success_patterns(df)
+
+        # Próba załadowania wytrenowanego modelu, jeśli jest dostępny
+        model_path = 'models/youtube_success_model.pkl'
+        model_available = os.path.exists(model_path)
+
+        if model_available:
+            try:
+                model = joblib.load(model_path)
+                if hasattr(model, 'named_steps') and 'regressor' in model.named_steps:
+                    regressor = model.named_steps['regressor']
+                    if hasattr(regressor, 'feature_importances_'):
+                        # Pobranie nazw cech po transformacji
+                        feature_names = []
+                        if hasattr(model.named_steps['preprocessor'], 'get_feature_names_out'):
+                            feature_names = model.named_steps['preprocessor'].get_feature_names_out()
+                        else:
+                            feature_names = [f"feature_{i}" for i in range(len(regressor.feature_importances_))]
+
+                        # Jeśli jest selektor cech, to korzystamy z niego
+                        if 'selector' in model.named_steps:
+                            selector = model.named_steps['selector']
+                            mask = selector.get_support()
+                            feature_names = [f for m, f in zip(mask, feature_names) if m]
+
+                        # Ważność cech
+                        feature_importance = pd.DataFrame({
+                            'feature': feature_names[:len(regressor.feature_importances_)],
+                            'importance': regressor.feature_importances_
+                        }).sort_values('importance', ascending=False)
+                    else:
+                        feature_importance = None
+                else:
+                    feature_importance = None
+            except Exception as e:
+                st.error(f"Błąd podczas ładowania modelu: {str(e)}")
+                model_available = False
+                feature_importance = None
+        else:
+            feature_importance = None
+
+    # Przewodnik krok po kroku - używamy tabów zamiast ekspanderów
+    st.subheader("📋 Krok po Kroku do Sukcesu na YouTube")
+
+    # Używamy tabów zamiast ekspanderów
+    tabs = st.tabs([
+        "🎯 Krok 1: Wybór tematyki i języka",
+        "⏱️ Krok 2: Długość i format",
+        "🏷️ Krok 3: Hashtagi i opis",
+        "👥 Krok 4: Zaangażowanie społeczności",
+        "🔄 Krok 5: Regularne publikowanie",
+        "🧪 Krok 6: Testowanie i optymalizacja"
+    ])
+
+    with tabs[0]:  # Krok 1
+        st.markdown("### Wybór języka i tematyki")
+
+        if 'top_languages' in insights and len(insights['top_languages']) > 0:
+            top_language = insights['top_languages'].iloc[0]['language']
+            st.success(f"🌍 **Rekomendowany język**: {top_language}")
+
+            # Wykres pokazujący wydajność według języka
+            st.markdown("#### Porównanie wydajności według języka:")
+
+            # Pobierz top 5 języków
+            top5_langs = insights['top_languages'].head(5)
+            fig = px.bar(
+                top5_langs,
+                x='language',
+                y='mean',
+                title="Średnia liczba wyświetleń według języka",
+                color='mean',
+                labels={'language': 'Język', 'mean': 'Średnia liczba wyświetleń'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("""
+        **Strategia tematyczna:**
+        1. Zidentyfikuj niszę z wysokim potencjałem i niższą konkurencją
+        2. Sprawdź trendy w wybranym języku używając narzędzi jak Google Trends
+        3. Wybierz obszar tematyczny, który możesz konsekwentnie rozwijać przez co najmniej rok
+        4. Analizuj konkurencję, aby znaleźć luki tematyczne, które możesz wypełnić
+        5. Dostosuj tematykę do języka - niektóre tematy mogą być bardziej popularne w określonych regionach językowych
+        """)
+
+    with tabs[1]:  # Krok 2
+        st.markdown("### Optymalizacja długości i formatu")
+
+        if 'duration_analysis' in insights and len(insights['duration_analysis']) > 0:
+            best_duration = insights['duration_analysis'].iloc[insights['duration_analysis']['mean'].argmax()][
+                'duration_category']
+            st.success(f"⏱️ **Optymalna długość filmu**: {best_duration}")
+
+            # Wykres pokazujący wydajność według długości
+            st.markdown("#### Wpływ długości filmu na wyświetlenia:")
+            fig = px.bar(
+                insights['duration_analysis'],
+                x='duration_category',
+                y='mean',
+                title="Średnie wyświetlenia według długości filmu",
+                color='mean',
+                labels={'duration_category': 'Długość filmu', 'mean': 'Średnie wyświetlenia'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("""
+        **Rekomendacje dotyczące formatu:**
+        1. Przygotuj pierwszy hook w pierwszych 15 sekundach, aby przyciągnąć uwagę widzów
+        2. Utrzymuj dynamiczne tempo, zmieniając ujęcia co 5-10 sekund
+        3. Używaj segmentacji treści, aby umożliwić łatwą nawigację po filmie
+        4. Testuj różne formaty (poradniki, reakcje, wywiady) i analizuj, które najlepiej działają dla Twojej grupy odbiorców
+        5. Zadbaj o jakość dźwięku - często ważniejszą niż obraz
+        6. Stwórz rozpoznawalną strukturę filmów (intro, powitanie, treść, outro)
+        """)
+
+    with tabs[2]:  # Krok 3
+        st.markdown("### Optymalizacja metadanych")
+
+        if 'hashtag_analysis' in insights and len(insights['hashtag_analysis']) > 0:
+            best_hashtags = insights['hashtag_analysis'].iloc[insights['hashtag_analysis']['mean'].argmax()][
+                'hashtag_category']
+            st.success(f"🔖 **Optymalna liczba hashtagów**: {best_hashtags}")
+
+            # Wykres pokazujący wydajność według liczby hashtagów
+            st.markdown("#### Wpływ liczby hashtagów na wyświetlenia:")
+            fig = px.bar(
+                insights['hashtag_analysis'],
+                x='hashtag_category',
+                y='mean',
+                title="Średnie wyświetlenia według liczby hashtagów",
+                color='mean',
+                labels={'hashtag_category': 'Liczba hashtagów', 'mean': 'Średnie wyświetlenia'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("""
+        **Optymalizacja metadanych:**
+        1. Używaj najważniejszych słów kluczowych w tytule filmu
+        2. Tworząc opis:
+           - Umieść najważniejsze informacje w pierwszych 2-3 liniach
+           - Dodaj timestampy do dłuższych filmów
+           - Umieść linki do powiązanych treści i do Twoich mediów społecznościowych
+        3. Wybieraj hashtagi, które są:
+           - Popularne, ale nie za bardzo (aby nie zginąć w natłoku treści)
+           - Precyzyjne i związane z tematyką filmu
+           - Mix popularnych i niszowych hashtagów
+        4. Projektuj miniaturki, które:
+           - Wyróżniają się kolorystycznie
+           - Zawierają wyraźny tekst (maksymalnie 3-4 słowa)
+           - Wzbudzają ciekawość, bez clickbaitu
+        """)
+
+    with tabs[3]:  # Krok 4
+        st.markdown("### Strategie zaangażowania społeczności")
+
+        if 'engagement_analysis' in insights and len(insights['engagement_analysis']) > 0:
+            best_engagement = insights['engagement_analysis'].iloc[insights['engagement_analysis']['mean'].argmax()][
+                'engagement_category']
+            st.success(f"👨‍👩‍👧‍👦 **Optymalna częstotliwość postów społecznościowych**: {best_engagement} tygodniowo")
+
+            # Wykres pokazujący wydajność według zaangażowania społeczności
+            st.markdown("#### Wpływ aktywności społecznościowej na wyświetlenia:")
+            fig = px.bar(
+                insights['engagement_analysis'],
+                x='engagement_category',
+                y='mean',
+                title="Średnie wyświetlenia według zaangażowania społeczności",
+                color='mean',
+                labels={'engagement_category': 'Posty tygodniowo', 'mean': 'Średnie wyświetlenia'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("""
+        **Strategie angażowania widzów:**
+        1. Zadawaj pytania w filmach, które zachęcają do komentowania
+        2. Odpowiadaj na komentarze, szczególnie w pierwszych 24 godzinach po publikacji
+        3. Organizuj regularne formaty angażujące społeczność (Q&A, przegląd komentarzy)
+        4. Buduj społeczność poza YouTube (Discord, Instagram, itp.)
+        5. Konsekwentnie publikuj treści według określonego harmonogramu
+        6. Organizuj konkursy i wyzwania dla społeczności
+        7. Twórz treści we współpracy z innymi twórcami (collab)
+        8. Twórz ankiety i korzystaj z funkcji społecznościowych YouTube
+        """)
+
+    with tabs[4]:  # Krok 5
+        st.markdown("### Znaczenie konsekwencji w publikowaniu")
+
+        if 'video_count_analysis' in insights and len(insights['video_count_analysis']) > 0:
+            best_video_count = insights['video_count_analysis'].iloc[insights['video_count_analysis']['mean'].argmax()][
+                'video_count_category']
+            st.success(f"📈 **Optymalny rozmiar biblioteki treści**: {best_video_count} filmów")
+
+            # Wykres pokazujący wydajność według liczby filmów
+            st.markdown("#### Wpływ liczby filmów na kanale na wyświetlenia:")
+            fig = px.bar(
+                insights['video_count_analysis'],
+                x='video_count_category',
+                y='mean',
+                title="Średnie wyświetlenia według liczby filmów na kanale",
+                color='mean',
+                labels={'video_count_category': 'Liczba filmów', 'mean': 'Średnie wyświetlenia'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("""
+        **Zasady konsekwentnego tworzenia treści:**
+        1. Ustal realistyczny harmonogram publikacji (1-3 filmy tygodniowo jest optymalnym tempem dla większości twórców)
+        2. Twórz seryjne treści, które budują lojalność widzów
+        3. Wykorzystuj narzędzia planowania treści, aby zapewnić regularność
+        4. Analizuj metryki, aby ustalić optymalny dzień i godzinę publikacji
+        5. Buduj "backlog" filmów, aby zachować regularność nawet w trudnych okresach
+        6. Twórz kalendarz treści z wyprzedzeniem miesięcznym lub kwartalnym
+        7. Ustal system pracy, który pozwoli Ci efektywnie tworzyć treści
+        8. Monitoruj i dostosowuj się do sezonowych trendów
+        """)
+
+    with tabs[5]:  # Krok 6
+        st.markdown("### Strategie testowania i optymalizacji")
+
+        # Model insights if available
+        if model_available and feature_importance is not None:
+            st.markdown("#### Najważniejsze czynniki wpływające na sukces według modelu ML:")
+            top_features = feature_importance.head(10)
+            fig = px.bar(
+                top_features,
+                x='importance',
+                y='feature',
+                orientation='h',
+                title="Top 10 czynników sukcesu według modelu uczenia maszynowego",
+                labels={'importance': 'Ważność', 'feature': 'Czynnik'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("""
+        **Strategie optymalizacji opartej na danych:**
+        1. Stale monitoruj statystyki w YouTube Studio
+        2. Testuj różne:
+           - Miniatury (A/B testing)
+           - Formaty tytułów
+           - Call-to-action w filmach
+        3. Analizuj retencję widzów, aby identyfikować momenty, w których widzowie przestają oglądać
+        4. Korzystaj z narzędzi zewnętrznych do analizy trendów i konkurencji
+        5. Cyklicznie przeglądaj najlepiej działające treści i wyciągaj z nich wnioski
+        6. Dostosowuj strategię SEO w oparciu o zmieniające się algorytmy YouTube
+        7. Korzystaj z narzędzi analitycznych, aby identyfikować nowe słowa kluczowe
+        8. Zbieraj bezpośredni feedback od widzów poprzez ankiety i komentarze
+        """)
+
+    # Final summary - POZA TABAMI
+    st.markdown("---")
+    st.subheader("💎 Podsumowanie Kluczowych Czynników Sukcesu")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### Co najbardziej wpływa na liczbę wyświetleń")
+
+        success_factors = []
+
+        if 'best_duration' in insights:
+            success_factors.append(f"✅ Optymalna długość filmu: **{insights['best_duration']}**")
+
+        if 'top_languages' in insights and len(insights['top_languages']) > 0:
+            top_language = insights['top_languages'].iloc[0]['language']
+            success_factors.append(f"✅ Najlepiej performujący język: **{top_language}**")
+
+        if 'hashtag_analysis' in insights and len(insights['hashtag_analysis']) > 0:
+            best_hashtags = insights['hashtag_analysis'].iloc[insights['hashtag_analysis']['mean'].argmax()][
+                'hashtag_category']
+            success_factors.append(f"✅ Optymalna liczba hashtagów: **{best_hashtags}**")
+
+        if 'engagement_analysis' in insights and len(insights['engagement_analysis']) > 0:
+            best_engagement = insights['engagement_analysis'].iloc[insights['engagement_analysis']['mean'].argmax()][
+                'engagement_category']
+            success_factors.append(
+                f"✅ Najlepsza częstotliwość postów społecznościowych: **{best_engagement}** tygodniowo")
+
+        if 'video_count_analysis' in insights and len(insights['video_count_analysis']) > 0:
+            best_video_count = insights['video_count_analysis'].iloc[insights['video_count_analysis']['mean'].argmax()][
+                'video_count_category']
+            success_factors.append(f"✅ Optymalny rozmiar biblioteki treści: **{best_video_count}** filmów")
+
+        # Display success factors
+        for factor in success_factors:
+            st.markdown(factor)
+
+    with col2:
+        st.markdown("#### Najważniejsze rekomendacje")
+
+        st.markdown("""
+        1. **Konsekwencja** - regularnie publikuj treści według ustalonego harmonogramu
+        2. **Jakość** - stawiaj na wartościowe treści, które rozwiązują problemy widzów
+        3. **Optymalizacja** - testuj różne podejścia i analizuj dane aby doskonalić strategię
+        4. **Zaangażowanie** - buduj społeczność poprzez interakcje z widzami
+        5. **Cierpliwość** - sukces na YouTube to maraton, nie sprint - bądź gotów inwestować czas długoterminowo
+        """)
+
+    # Additional links and resources
+    st.markdown("---")
+    st.markdown("### 📚 Dodatkowe Zasoby")
+    st.markdown("""
+    - [YouTube Creator Academy](https://creatoracademy.youtube.com/)
+    - [vidIQ - Narzędzie do analizy YouTube](https://vidiq.com/)
+    - [TubeBuddy - Optymalizacja kanału](https://www.tubebuddy.com/)
+    - [Social Blade - Statystyki i dane](https://socialblade.com/)
+    """)
 
 if __name__ == "__main__":
     main()
